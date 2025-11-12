@@ -14,10 +14,11 @@ import re
 import numpy as np
 import pandas as pd
 import scipy.constants as sc
+import pyratbay.spectrum as ps
 
 # Constants
 parsec = sc.parsec * 100.0   # 1 parsec in cm
-r_sun = 6.955e10        # Solar radius in cm
+r_sun = 6.955e10  # Solar radius in cm
 
 
 def gaussbroad(wl, signal, hwhm):
@@ -32,13 +33,6 @@ def gaussbroad(wl, signal, hwhm):
         spectrum to be smoothed
     hwhm: Float
         Half width at half maximum of smoothing gaussian.
-
-    Warn user if hwhm is negative.
-    if hwhm lt 0.0 then $
-        message,/info,'Warning! Forcing negative smoothing width to zero.'
-        #
-        ##Return input argument if half-width is nonpositive.
-        #  if hwhm le 0.0 then return,s			#true: no broadening
     """
     #Calculate (uniform) dispersion.
     nwave = len(wl)
@@ -46,7 +40,8 @@ def gaussbroad(wl, signal, hwhm):
     dwl = (wl[-1] - wl[0]) / nwave
     for i in range(0, len(wl)):
         # Smoothing gaussian, extend to 4 sigma.
-        # 4.0 / sqrt(2.0*log(2.0)) = 3.3972872 & sqrt(log(2.0))=0.83255461
+        # 4.0 / np.sqrt(2.0*np.log(2.0)) = 3.3972872
+        # sqrt(log(2.0)) = 0.83255461
         # sqrt(log(2.0)/pi)=0.46971864 (*1.0000632 to correct for >4 sigma wings)
         if(hwhm > 5*(wl[-1] - wl[0])):
             return np.full(len(wl), np.sum(signal)/nwave)
@@ -64,7 +59,6 @@ def gaussbroad(wl, signal, hwhm):
         gpro = gpro/np.sum(gpro)
 
     # Pad spectrum ends to minimize impact of Fourier ringing.
-    # pad pixels on each end
     npad = nhalf + 2
     spad = np.concatenate((
         np.full(npad, signal[0]),
@@ -132,55 +126,53 @@ def snr_calc(
         photo=False,
     ):
     """
-    effective_area = VIS_EFF_AREA = 170.296
+    Parameters
+    ----------
+    effective_area = 170.296
     wl_min = 6700
     wl_max = 7100
     fwhm = 2.0
     photo = False
     vis_snr = snr_calc(wl, flux, effective_area, wl_min, wl_max, fwhm, exp_time, n_obs)
     """
-    # Compute number of photons
-    photons = 5.03e7 * wl * flux  # Convert to photons cm^-2 s^-1 A^-1
-    fl_res = gaussbroad(wl, photons, 0.5*fwhm)
-    if False:
-        plt.figure(0)
-        plt.clf()
-        plt.plot(wl, photons, color='tomato')
-        plt.plot(wl, fl_res, color='xkcd:blue')
-        plt.axvspan(wl_min, wl_max, color='xkcd:green', alpha=0.5)
-
-    fl_band = fl_res * effective_area
     index_band = (wl > wl_min) & (wl < wl_max)
     mean_band = np.mean(flux[index_band])
     max_band = np.max(flux[index_band])
     min_band = np.min(flux[index_band])
-    w_band = np.arange(wl_min, wl_max, fwhm)
 
-    # Compute photons collected per transit
+    # Convert flux to photons A-1 s-1
+    photons = flux * 5.03e7 * wl * effective_area
+    #photons = flux / (pc.c*pc.h / (wl*pc.A))
+
+    # Photons collected per transit
     if photo:
-        fl = photons * effective_area * exp_time
+        band_flux = photons * exp_time
         integ_flux, integ_var = trapz_error(
             wl[index_band],
-            fl[index_band],
-            flux[index_band]*0.0,
+            band_flux[index_band],
+            band_flux[index_band]*0.0,
         )
         snr_inter = integ_flux/np.sqrt(integ_flux)
         trans_uncer = np.sqrt(2.0) / snr_inter
         return min_band, mean_band, max_band, integ_flux, snr_inter, trans_uncer
 
     # Spectroscopy
-    finter = np.interp(w_band, wl, fl_band)
-    p_band = finter*exp_time * n_obs
-    #p_band = fl_band*exp_time * n_obs
+    w_band = np.arange(wl_min, wl_max, fwhm)
+    band_flux = photons * exp_time * n_obs
+    p_band = np.interp(w_band, wl, band_flux)
+
+    # Poisson noise
     snr = p_band / np.sqrt(p_band)
 
     # Compute SNR and transit uncertainty
-    #snr_mean = np.mean(snr[index_band])
-    #snr_max  = np.max(snr[index_band])
     snr_mean = np.mean(snr)
-    snr_max  = np.max(snr)
+    snr_max = np.max(snr)
     trans_uncer = np.sqrt(2.0) / snr_mean
-    return min_band, mean_band, max_band, snr_mean, snr_max, trans_uncer
+    return (
+        min_band, mean_band, max_band,
+        snr_mean, snr_max,
+        trans_uncer,
+    )
 
 
 def main(
@@ -195,7 +187,7 @@ def main(
     Usage
     -----
     From the command line:
-    python snr_waltzer.py targets.csv  waltzer_snr.csv
+    python snr_waltzer.py target_list_20250327.csv  waltzer_snr_test.csv
 
     targets.csv is a CSV list of targets (e.g., downloaded from the
     NASA Exoplanet Archive).  This file must contain these headers:
@@ -235,8 +227,13 @@ def main(
         - NIR_mean_snr         Mean SNR in NIR band
         - NIR_max_snr          Maximum SNR in NIR band
         - NIR_transit_uncert   NIR transit uncertainty
+
+    csv_file = 'target_list_20250327.csv'
+    output_csv = "waltzer_snr.csv"
+    diameter = 30.0
+    n_obs = 10
     """
-    #Effective area calculations
+    # Effective area calculations
     primary_area = np.pi * (0.5*diameter)**2.0
     Rprim    = 0.90  # Telescope primary reflectance in %
     Rsec     = 0.90  # Telescope secondary reflectance in %
@@ -275,8 +272,7 @@ def main(
     exp_time = (60 * 60 * 2.5) * efficiency
 
     # Target list file path
-    file_path = "./target_list_20250327.csv"
-    data = pd.read_csv(file_path, delimiter=',', comment='#')
+    data = pd.read_csv(csv_file, delimiter=',', comment='#')
     ntargets = len(data)
 
     # Extract required columns into individual arrays
@@ -290,7 +286,9 @@ def main(
     v_mags = data['sy_vmag']
 
     # WALTzER wavelength grid (angstrom)
-    wl = np.arange(2500, 11000, 1)
+    resolution = 50_000.0
+    inst_resolution = 3_000.0
+    wl = ps.constant_resolution_spectrum(2_500, 20_000, resolution=resolution)
 
     # Read models files
     output_data = []
@@ -313,10 +311,14 @@ def main(
             sed_flux = np.interp(wl, sed_wl, flux)
             cache_seds[file] = sed_flux
 
+        conv_flux = ps.inst_convolution(
+            wl, sed_flux, inst_resolution, sampling_res=resolution,
+        )
+
         # Convert flux from XX to erg s-1 cm-2 A-1
         # integrate over steradian
         # and evaluate at Earth
-        flux = sed_flux * (
+        flux = conv_flux * (
             (sc.c / sc.angstrom) / (wl**2)
             * 4.0 * np.pi
             * (star_R/star_dist)**2.0
@@ -330,7 +332,6 @@ def main(
             wl, flux, NUV_EFF_AREA, nuv_wl_min, nuv_wl_max, nuv_fwhm,
             exp_time, n_obs,
         )
-        #nuv = waveband(*nuv_snr)
 
         vis_wl_min = 6700.0
         vis_wl_max = 7100.0
@@ -339,18 +340,16 @@ def main(
             wl, flux, VIS_EFF_AREA, vis_wl_min, vis_wl_max, vis_fwhm,
             exp_time, n_obs,
         )
-        #optical = waveband(*vis_snr)
 
         nir_wl_min =  8200.0
         nir_wl_max = 10000.0
-        nir_fwhm = 2000.0
+        nir_fwhm = 3.33
         nir_exp_time = 60 * 30.0
         nir_n_obs = 1
         nir_snr = snr_calc(
             wl, flux, NIR_EFF_AREA, nir_wl_min, nir_wl_max, nir_fwhm,
             nir_exp_time, nir_n_obs, photo=True,
         )
-        #nir = waveband(*nir_snr)
 
         # Save results
         output_data.append([
