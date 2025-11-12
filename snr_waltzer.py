@@ -13,12 +13,8 @@ import re
 
 import numpy as np
 import pandas as pd
-import scipy.constants as sc
+import pyratbay.constants as pc
 import pyratbay.spectrum as ps
-
-# Constants
-parsec = sc.parsec * 100.0   # 1 parsec in cm
-r_sun = 6.955e10  # Solar radius in cm
 
 
 def gaussbroad(wl, signal, hwhm):
@@ -73,10 +69,13 @@ def gaussbroad(wl, signal, hwhm):
     return sout
 
 
-def trapz_error(wl, flux, error):
+def trapz_error(wl, flux, error=None):
     """
     Trapezoidal integration with error propagation.
     """
+    if error is None:
+        error = np.zeros(len(flux))
+
     integ = 0.0
     var = 0.0
     dwl = np.ediff1d(wl, 0, 0)
@@ -122,7 +121,7 @@ def find_closest_teff(base_dir, teff):
 
 
 def snr_calc(
-        wl, flux, effective_area, wl_min, wl_max, fwhm, exp_time, n_obs,
+        wl, flux, effective_area, wl_min, wl_max, bin_edges, exp_time, n_obs,
         photo=False,
     ):
     """
@@ -140,34 +139,46 @@ def snr_calc(
     max_band = np.max(flux[index_band])
     min_band = np.min(flux[index_band])
 
-    # Convert flux to photons A-1 s-1
-    photons = flux * 5.03e7 * wl * effective_area
-    #photons = flux / (pc.c*pc.h / (wl*pc.A))
+    # Convert flux (erg s-1 cm-2 A-1) to photons s-1 A-1
+    photons = flux * wl*pc.A / (pc.c*pc.h) * effective_area
 
-    # Photons collected per transit
+    # Photometry
     if photo:
         band_flux = photons * exp_time
-        integ_flux, integ_var = trapz_error(
-            wl[index_band],
-            band_flux[index_band],
-            band_flux[index_band]*0.0,
-        )
-        snr_inter = integ_flux/np.sqrt(integ_flux)
+        integ_flux = np.trapezoid(band_flux[index_band], wl[index_band])
+        snr_inter = integ_flux / np.sqrt(integ_flux)
         trans_uncer = np.sqrt(2.0) / snr_inter
         return min_band, mean_band, max_band, integ_flux, snr_inter, trans_uncer
 
+
     # Spectroscopy
-    w_band = np.arange(wl_min, wl_max, fwhm)
-    band_flux = photons * exp_time * n_obs
-    p_band = np.interp(w_band, wl, band_flux)
+    band_photons = photons[index_band]
+    wl_band = wl[index_band]
 
-    # Poisson noise
-    snr = p_band / np.sqrt(p_band)
+    # Integrate at each instrumental bin to get photons s-1
+    i_min = np.searchsorted(bin_edges, wl_min)
+    i_max = np.searchsorted(bin_edges, wl_max)
+    bin_wl = 0.5 * (bin_edges[i_min+1:i_max] + bin_edges[i_min:i_max-1])
+    half_widths = bin_wl - bin_edges[i_min:i_max-1]
 
-    # Compute SNR and transit uncertainty
+    nbins = len(bin_wl)
+    bin_flux = np.zeros(nbins)
+    for i in range(nbins):
+        bin_mask = (
+            (wl_band>=bin_edges[i_min+i]) &
+            (wl_band<=bin_edges[i_min+i+1])
+        )
+        bin_flux[i] = np.trapezoid(band_photons[bin_mask], wl_band[bin_mask])
+
+    # And integrate over time
+    bin_flux *= exp_time * n_obs
+
+    # Poisson noise estimation for SNR and transit-depth uncertainty
+    snr = bin_flux / np.sqrt(bin_flux)
     snr_mean = np.mean(snr)
     snr_max = np.max(snr)
     trans_uncer = np.sqrt(2.0) / snr_mean
+
     return (
         min_band, mean_band, max_band,
         snr_mean, snr_max,
@@ -285,10 +296,13 @@ def main(
     distances = data['sy_dist']
     v_mags = data['sy_vmag']
 
-    # WALTzER wavelength grid (angstrom)
-    resolution = 50_000.0
-    inst_resolution = 3_000.0
+    resolution = 60_000.0
     wl = ps.constant_resolution_spectrum(2_500, 20_000, resolution=resolution)
+    # WALTzER resolution and wavelength grid (angstrom)
+    inst_resolution = 3_000.0
+    bin_edges = ps.constant_resolution_spectrum(
+        2_500, 20_000, resolution=2.0*inst_resolution,
+    )
 
     # Read models files
     output_data = []
@@ -296,8 +310,8 @@ def main(
     models_loc = './models/'
     for i in range(ntargets):
         print(f'Target {i+1}/{ntargets}: {repr(planet_names[i])}')
-        star_R = stellar_radii[i] * r_sun
-        star_dist = distances[i] * parsec
+        star_R = stellar_radii[i] * pc.rsun
+        star_dist = distances[i] * pc.parsec
         # Load SED model spectrum based on temperature
         teff = stellar_temps[i]
         t_model, teff_match = find_closest_teff(models_loc, teff)
@@ -319,35 +333,38 @@ def main(
         # integrate over steradian
         # and evaluate at Earth
         flux = conv_flux * (
-            (sc.c / sc.angstrom) / (wl**2)
+            (pc.c / pc.A) / (wl**2)
             * 4.0 * np.pi
             * (star_R/star_dist)**2.0
         )
 
         # Calculations for bands
+        # NUV = 2500 -  3300 A
+        # VIS = 4160 -  8200 A
+        # NIR = 8200 - 16500 A
         nuv_wl_min = 2640.0
         nuv_wl_max = 2700.0
-        nuv_fwhm = 0.8
+        #nuv_fwhm = 0.8
         nuv_snr = snr_calc(
-            wl, flux, NUV_EFF_AREA, nuv_wl_min, nuv_wl_max, nuv_fwhm,
+            wl, flux, NUV_EFF_AREA, nuv_wl_min, nuv_wl_max, bin_edges,
             exp_time, n_obs,
         )
 
         vis_wl_min = 6700.0
         vis_wl_max = 7100.0
-        vis_fwhm = 2.0
+        #vis_fwhm = 2.0
         vis_snr = snr_calc(
-            wl, flux, VIS_EFF_AREA, vis_wl_min, vis_wl_max, vis_fwhm,
+            wl, flux, VIS_EFF_AREA, vis_wl_min, vis_wl_max, bin_edges,
             exp_time, n_obs,
         )
 
         nir_wl_min =  8200.0
         nir_wl_max = 10000.0
-        nir_fwhm = 3.33
+        #nir_fwhm = 3.33
         nir_exp_time = 60 * 30.0
         nir_n_obs = 1
         nir_snr = snr_calc(
-            wl, flux, NIR_EFF_AREA, nir_wl_min, nir_wl_max, nir_fwhm,
+            wl, flux, NIR_EFF_AREA, nir_wl_min, nir_wl_max, bin_edges,
             nir_exp_time, nir_n_obs, photo=True,
         )
 
