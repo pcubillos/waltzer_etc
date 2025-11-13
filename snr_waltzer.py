@@ -17,77 +17,6 @@ import pyratbay.constants as pc
 import pyratbay.spectrum as ps
 
 
-def gaussbroad(wl, signal, hwhm):
-    """
-    Smooths a spectrum by convolution with a gaussian of specified hwhm.
-
-    Parameters
-    ----------
-    wl: 1D float array
-        wavelength scale of spectrum to be smoothed
-    s: 1D float array
-        spectrum to be smoothed
-    hwhm: Float
-        Half width at half maximum of smoothing gaussian.
-    """
-    #Calculate (uniform) dispersion.
-    nwave = len(wl)
-    # wavelength change per pixel
-    dwl = (wl[-1] - wl[0]) / nwave
-    for i in range(0, len(wl)):
-        # Smoothing gaussian, extend to 4 sigma.
-        # 4.0 / np.sqrt(2.0*np.log(2.0)) = 3.3972872
-        # sqrt(log(2.0)) = 0.83255461
-        # sqrt(log(2.0)/pi)=0.46971864 (*1.0000632 to correct for >4 sigma wings)
-        if(hwhm > 5*(wl[-1] - wl[0])):
-            return np.full(len(wl), np.sum(signal)/nwave)
-
-        # points in half gaussian
-        nhalf = int(3.3972872*hwhm / dwl)
-        # points in gaussian (odd!)
-        ng = 2 * nhalf + 1
-        # wavelength scale of gaussian
-        wg = dwl * (np.arange(ng) - (ng-1)/2.0)
-        # convenient absisca
-        xg = ( (0.83255461) / hwhm) * wg
-        #unit area gaussian w/ FWHM
-        gpro = ( (0.46974832) * dwl / hwhm) * np.exp(-xg*xg)
-        gpro = gpro/np.sum(gpro)
-
-    # Pad spectrum ends to minimize impact of Fourier ringing.
-    npad = nhalf + 2
-    spad = np.concatenate((
-        np.full(npad, signal[0]),
-        signal,
-        np.full(npad,signal[-1])
-    ))
-
-    # Convolve with gaussian
-    sout = np.convolve(spad, gpro, mode='full')
-    # Trim to original data/length
-    sout = sout[npad:npad+nwave]
-    return sout
-
-
-def trapz_error(wl, flux, error=None):
-    """
-    Trapezoidal integration with error propagation.
-    """
-    if error is None:
-        error = np.zeros(len(flux))
-
-    integ = 0.0
-    var = 0.0
-    dwl = np.ediff1d(wl, 0, 0)
-    ddwl = dwl[1:] + dwl[:-1]
-
-    # Standard trapezoidal integration:
-    integ = 0.5 * np.sum(ddwl * flux)
-    var = 0.25 * np.sum((ddwl * error)**2)
-
-    return integ, np.sqrt(var)
-
-
 def find_closest_teff(teff, base_dir='./models/'):
     """
     Find folder in base_dir with closest temperature to teff.
@@ -444,7 +373,7 @@ def main(
             wl, flux, NIR_EFF_AREA, nir_wl_min, nir_wl_max, bin_edges,
             photometry=True,
         )
-        nir_snr_stats = snr_stats(nir_wl, nir_flux, exp_time, n_obs)
+        nir_snr_stats = snr_stats(nir_wl, nir_flux, exp_time, n_obs)[1:]
         nir_flux_stats = flux_stats(wl, flux, nir_wl_min, nir_wl_max)
 
         # Save results
@@ -467,15 +396,25 @@ def main(
 
     # Save result as CSV file
     header = (
-        "planet, teff, r_star, m_star, ra, dec, distance, V_mag, "
+        "target, teff, r_star, m_star, ra, dec, distance, V_mag, "
         "NUV_mean_flux, NUV_max_flux,"
         "NUV_mean_snr, NUV_max_snr, NUV_transit_uncert, "
-        "VIS_mean_flux, VIS_max_flux,"
+        "VIS_mean_flux, VIS_max_flux, "
         "VIS_mean_snr, VIS_max_snr, VIS_transit_uncert, "
-        "NIR_mean_flux, NIR_max_flux,"
-        "NIR_mean_snr, NIR_max_snr, NIR_transit_uncert, "
-    )
-    np.savetxt(output_csv, output_data, header=header, fmt="%s", delimiter=',')
+        "NIR_mean_flux, NIR_max_flux, NIR_snr, NIR_transit_uncert "
+    ).split(',')
+    header = [h.strip() for h in header]
+    units = (
+        "name, K, R_sun, M_sun, deg, deg, parsec, , "
+        "erg s-1 cm-2 A-1, erg s-1 cm-2 A-1, e-/s, e-/s, ,"
+        "erg s-1 cm-2 A-1, erg s-1 cm-2 A-1, e-/s, e-/s, ,"
+        "erg s-1 cm-2 A-1, erg s-1 cm-2 A-1, e-/s,"
+    ).split(',')
+
+    with open(output_csv, 'w') as f:
+        f.write(','.join(header) + '\n')
+        f.write(', '.join(units) + '\n')
+        np.savetxt(f, output_data, delimiter=",", fmt="%s")
 
 
 if __name__ == '__main__':
