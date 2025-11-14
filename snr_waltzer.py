@@ -25,6 +25,141 @@ import pyratbay.spectrum as ps
 import scipy.interpolate as si
 
 
+def simulate_spectrum(
+        tso, depth_model, n_obs=1, resolution=300.0,
+        transit_dur=None, efficiency=0.6,
+    ):
+    """
+    Combine a WALTzER output SNR data with a transmission spectrum
+    to simulate observations.
+
+    Parameters
+    ----------
+    tso: Dictionary
+        A planet's model, output from running snr_waltzer.py.
+    depth_model: 2D float array
+        Transit depth model, array of shape [2,nwave] with:
+        - wavelength (angstrom)
+        - transit depth
+    n_obs: Integer
+        Number of transits to co-add.
+    resolution: Float
+        Output resolution.
+    transit_dur: Float
+        If not None, overwrite transit duration (h) from tso dictionary.
+    efficiency: Float
+        WALTZER duty cycle efficiency.
+
+    Returns
+    -------
+    walz_wl: List of 1D float arrays
+        WALTZER wavelength array for NUV, VIS, and NIR bands (angstrom)
+    walz_spec: List of 1D float arrays
+        WALTZER transit depths for each band
+    walz_err: List of 1D float arrays
+        WALTZER transit-depth uncertainties for each band
+    walz_widths: List of 1D float arrays
+        Wavelength half-widths of WALTZER data points (angstrom).
+
+    Examples
+    --------
+    >>> # Load WALTzER SNR output pickle file
+    >>> tso_file = 'waltzer_snr_test.pickle'
+    >>> with open(tso_file, 'rb') as handle:
+    >>>     spectra = pickle.load(handle)
+    >>> tso = spectra['HD 209458 b']
+
+    >>> # Load a transit-depth spectrum
+    >>> gcm_file = 'gcms/transit_all_1600K_clear.dat'
+    >>> depth_model = np.loadtxt(gcm_file, unpack=True)
+
+    >>> sim = simulate_spectrum(tso, depth_model, n_obs=10, resolution=300.0)
+    """
+    # Interpolate to WALTzER grid:
+    model = si.interp1d(
+        depth_model[0], depth_model[1],
+        kind='slinear', bounds_error=False, fill_value='extrapolate',
+    )
+
+    if transit_dur is None:
+        transit_dur = tso['transit_dur']
+
+    dt_in = transit_dur * 3600.0
+    dt_out = 2.0 * np.amax([0.5*dt_in, 3600.0])
+
+    walz_wl = []
+    walz_spec = []
+    walz_err = []
+    walz_widths = []
+    for j in range(3):
+        flux = tso['e_flux'][j]
+        half_width = tso['wl_half_width'][j]
+        wl = tso['wl'][j]
+
+        # Transit
+        depth = model(wl)
+        flux_out = flux * n_obs * efficiency
+        flux_in = (1.0-depth) * flux * n_obs * efficiency
+        # Poisson noise estimation
+        var_out = flux_out*dt_out
+        var_in = flux_in*dt_in
+
+        # Photometry
+        if len(wl) == 1:
+            bin_in = flux_in
+            bin_out = flux_out
+            bin_vin = var_in
+            bin_vout = var_out
+            bin_wl = wl
+            bin_widths = half_width
+            band = ps.Tophat(wl[0], half_width[0], wl=depth_model[0])
+            bin_depth = band.integrate(depth_model[1])
+        # Spectroscopy binning
+        else:
+            wl_min = np.amin(wl)
+            wl_max = np.amax(wl)
+            if resolution is not None:
+                bin_edges = ps.constant_resolution_spectrum(
+                    wl_min, wl_max, resolution,
+                )
+                bin_edges = np.append(bin_edges, wl_max)
+            else:
+                bin_edges = 0.5 * (wl[1:] + wl[:-1])
+
+            bin_wl = 0.5 * (bin_edges[1:] + bin_edges[:-1])
+            bin_widths = bin_wl - bin_edges[:-1]
+            bin_depth = ps.bin_spectrum(bin_wl, wl, depth)
+            nbins = len(bin_wl)
+            bin_out = np.zeros(nbins)
+            bin_in = np.zeros(nbins)
+            bin_vout = np.zeros(nbins)
+            bin_vin = np.zeros(nbins)
+            for i in range(nbins):
+                bin_mask = (wl>=bin_edges[i]) & (wl<bin_edges[i+1])
+                bin_out[i] = np.sum(flux_out[bin_mask])
+                bin_in[i] = np.sum(flux_in[bin_mask])
+                bin_vout[i] = np.sum(var_out[bin_mask])
+                bin_vin[i] = np.sum(var_in[bin_mask])
+
+        bin_err = np.sqrt(
+            (1.0/dt_in/bin_out)**2.0 * bin_vin +
+            (bin_in/dt_out/bin_out**2.0)**2.0 * bin_vout
+        )
+        # The numpy random system must have its seed reinitialized in
+        # each sub-processes to avoid identical 'random' steps.
+        # random.randomint is process- and thread-safe.
+        np.random.seed(random.randint(0, 100000))
+        rand_noise = np.random.normal(0.0, bin_err)
+        bin_spec = bin_depth + rand_noise
+
+        walz_wl.append(bin_wl)
+        walz_spec.append(bin_spec)
+        walz_err.append(bin_err)
+        walz_widths.append(bin_widths)
+
+    return walz_wl, walz_spec, walz_err, walz_widths
+
+
 def find_closest_teff(teff, base_dir='./models/'):
     """
     Find folder in base_dir with closest temperature to teff.
@@ -437,7 +572,7 @@ def main(
     ).split(',')
     header = [h.strip() for h in header]
     units = (
-        "name, K, R_sun, M_sun, deg, deg, parsec, , h,"
+        "#name, K, R_sun, M_sun, deg, deg, parsec, , h,"
         "erg s-1 cm-2 A-1, erg s-1 cm-2 A-1, , , ppm,"
         "erg s-1 cm-2 A-1, erg s-1 cm-2 A-1, , , ppm,"
         "erg s-1 cm-2 A-1, erg s-1 cm-2 A-1, , ppm"
