@@ -9,9 +9,10 @@ __all__ = [
     'photon_spectrum',
     'flux_stats',
     'snr_stats',
-    'main',
+    'waltzer_snr',
 ]
 
+import argparse
 import sys
 import os
 import re
@@ -27,7 +28,7 @@ import scipy.interpolate as si
 
 def simulate_spectrum(
         tso, depth_model, n_obs=1, resolution=300.0,
-        transit_dur=None, efficiency=0.6,
+        transit_dur=None, efficiency=0.6, noiseless=False,
     ):
     """
     Combine a WALTzER output SNR data with a transmission spectrum
@@ -63,6 +64,11 @@ def simulate_spectrum(
 
     Examples
     --------
+    >>> import pickle
+    >>> import numpy as np
+    >>> import pyratbay.constants as pc
+    >>> import snr_waltzer as w
+
     >>> # Load WALTzER SNR output pickle file
     >>> tso_file = 'waltzer_snr_test.pickle'
     >>> with open(tso_file, 'rb') as handle:
@@ -70,10 +76,34 @@ def simulate_spectrum(
     >>> tso = spectra['HD 209458 b']
 
     >>> # Load a transit-depth spectrum
-    >>> gcm_file = 'gcms/transit_all_1600K_clear.dat'
-    >>> depth_model = np.loadtxt(gcm_file, unpack=True)
+    >>> tdepth_file = 'transit_saturn_1600K_clear.dat'
+    >>> depth_model = np.loadtxt(tdepth_file, unpack=True)
 
-    >>> sim = simulate_spectrum(tso, depth_model, n_obs=10, resolution=300.0)
+    >>> sim = w.simulate_spectrum(
+    >>>     tso, depth_model,
+    >>>     n_obs=10,
+    >>>     resolution=300.0,
+    >>>     noiseless=False,
+    >>> )
+
+    >>> waltzer_wl, waltzer_spec, waltzer_err, waltzer_widths = sim
+    >>> fig = plt.figure(0)
+    >>> plt.clf()
+    >>> fig.set_size_inches(8,4)
+    >>> plt.plot(depth_model[0], depth_model[1]/pc.percent, color='xkcd:blue')
+    >>> bands = ['NUV', 'VIS', 'NIR']
+    >>> for j,band in enumerate(bands):
+    >>>     plt.errorbar(
+    >>>         waltzer_wl[j], waltzer_spec[j]/pc.percent,
+    >>>         waltzer_err[j]/pc.percent, xerr=waltzer_widths[j],
+    >>>         fmt='o', ecolor='cornflowerblue', color='royalblue',
+    >>>         mfc='w', ms=4, zorder=0,
+    >>>     )
+    >>> plt.xscale('log')
+    >>> plt.xlim(2400, 17000)
+    >>> plt.ylim(0.99, 1.12)
+
+
     """
     # Interpolate to WALTzER grid:
     model = si.interp1d(
@@ -150,6 +180,9 @@ def simulate_spectrum(
         # random.randomint is process- and thread-safe.
         np.random.seed(random.randint(0, 100000))
         rand_noise = np.random.normal(0.0, bin_err)
+        if noiseless:
+            rand_noise *= 0.0
+
         bin_spec = bin_depth + rand_noise
 
         walz_wl.append(bin_wl)
@@ -318,6 +351,8 @@ def flux_stats(wl, flux, wl_min, wl_max):
 
 def snr_stats(wl, flux, exp_time, n_obs):
     """
+    Compute basic SNR statistics within a wavelength interval.
+
     Parameters
     ----------
     effective_area = 170.296
@@ -344,7 +379,7 @@ def snr_stats(wl, flux, exp_time, n_obs):
     return snr_mean, snr_max, np.round(trans_uncer, 3)
 
 
-def main(
+def waltzer_snr(
          csv_file=None,
          output_csv="waltzer_snr.csv",
          diameter=30.0,
@@ -355,14 +390,13 @@ def main(
     """
     WALTzER Exposure time calculator
 
-    Usage
-    -----
-    From the command line:
-    python snr_waltzer.py target_list_20250327.csv  waltzer_snr_test.csv
-
-    targets.csv is a CSV list of targets (e.g., downloaded from the
-    NASA Exoplanet Archive).  This file must contain these headers:
+    Parameters
+    ----------
+    csv_file: String
+        A .csv list of targets (e.g., downloaded from the NASA
+        Exoplanet Archive).  This file must contain these headers:
         - 'pl_name'  Target's name
+        - 'pl_trandur'  Transit duration (h)
         - 'st_teff'  Host's effective temperature (K)
         - 'st_rad'   Host's radius (R_sun)
         - 'st_mass'  Host's mass (M_sun)
@@ -370,8 +404,8 @@ def main(
         - 'dec'      Declination (degrees)
         - 'sy_dist'  Distant to target (parsec)
         - 'sy_vmag'  Host's V magnitude
-
-    waltzer_snr.csv: Output filename where to save the resuls (as CSV)
+    output_csv: String
+        Output filename where to save the resuls (as CSV)
         - planet               Target name
         - teff                 Host's effective temperature (K)
         - r_star               Host's radius (R_sun)
@@ -394,11 +428,12 @@ def main(
         - NIR_max_flux         Maximum flux in NIR band (erg s-1 cm-2 A-1)
         - NIR_snr              SNR in NIR band
         - NIR_transit_uncert   NIR transit uncertainty
+    TBD
 
-    csv_file = 'target_list_20250327.csv'
-    output_csv = "waltzer_snr.csv"
-    diameter = 30.0
-    n_obs = 10
+    Notes
+    -----
+    Can also be run from the command line, e.g.:
+    python snr_waltzer.py target_list_20250327.csv waltzer_snr.csv
     """
     # Effective area calculations
     primary_area = np.pi * (0.5*diameter)**2.0
@@ -587,7 +622,7 @@ def main(
         f.write("#\n# SNR stats are per HWHM! resolving element\n")
         f.write(f"# Number of transits (for stats): {n_obs}\n")
         if t_dur is None:
-            f.write(f"# total in-transit time (for stats): see 'transit_dur' column\n")
+            f.write("# total in-transit time (for stats): see 'transit_dur' column\n")
         else:
             f.write(f"# total in-transit time (for stats): {t_dur} h\n")
 
@@ -605,13 +640,81 @@ def main(
 
 
 
-if __name__ == '__main__':
-    if len(sys.argv) != 3:
-        raise ValueError(
-            'Invalid calling sequence, must be: '
-            'python snr_waltzer.py targets.csv  waltzer_snr.csv'
-        )
-    targets_csv, output_csv = sys.argv[1:]
-    main(targets_csv, output_csv)
+def is_csv_file(filename: str) -> str:
+    """Validate that filename string is a .csv file."""
+    if not filename.lower().endswith(".csv"):
+        error = f"File '{filename}' must have .csv extension."
+        raise argparse.ArgumentTypeError(error)
+    return filename
 
 
+def parse_args():
+    """
+    Command-line parser for call from the prompt.
+    """
+    parser = argparse.ArgumentParser(
+        description="WALTzER SNR and ETC."
+    )
+
+    # Required positional arguments
+    parser.add_argument(
+        "input_file",
+        type=is_csv_file,
+        help="Input CSV file with target list.",
+    )
+    parser.add_argument(
+        "output_file",
+        type=is_csv_file,
+        help="Output CSV file with SNR statistics.",
+    )
+
+    # Optional arguments
+    parser.add_argument(
+        "--nobs",
+        type=int,
+        default=10,
+        help="Number of observations (default: 1).",
+    )
+    parser.add_argument(
+        "--diam",
+        type=float,
+        default=30.0,
+        help="Telescope diameter in cm (default: 30.0).",
+    )
+    parser.add_argument(
+        "--eff",
+        type=float,
+        default=0.6,
+        help="Telescope duty-cycle efficiency (default: 0.6).",
+    )
+    parser.add_argument(
+        "--tdur",
+        type=float,
+        default=None,
+        help="Transit duration in hours; if set, calculate statistics assuming a fixed transit duration for all targets. Else, take values from input .csv target list. (default: None).",
+    )
+
+    args = parser.parse_args()
+    return args
+
+
+if __name__ == "__main__":
+    """
+    WALTzER Exposure time calculator
+
+    Usage
+    -----
+    From the command line, run:
+    python snr_waltzer.py target_list_20250327.csv  waltzer_snr_test.csv
+    """
+
+    args = parse_args()
+    waltzer_snr(
+         csv_file=args.input_file,
+         output_csv=args.output_file,
+         diameter=args.diam,
+         efficiency=args.eff,
+         t_dur=args.tdur,
+         n_obs=args.nobs,
+    )
+    sys.exit(0)
