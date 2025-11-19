@@ -4,15 +4,15 @@
 # -*- coding: utf-8 -*-
 
 __all__ = [
+    'Detector',
     'simulate_spectrum',
     'find_closest_teff',
-    'photon_spectrum',
-    'flux_stats',
     'snr_stats',
     'waltzer_snr',
 ]
 
 import argparse
+import configparser
 import sys
 import os
 import re
@@ -24,6 +24,181 @@ import pandas as pd
 import pyratbay.constants as pc
 import pyratbay.spectrum as ps
 import scipy.interpolate as si
+
+
+class Detector():
+    def __init__(self, detector_cfg, wl_edges, eff_collecting_area):
+        """
+        detector_cfg = 'detectors/waltzer_nuv.cfg'
+        det = Detector(detector_cfg)
+
+        Parameters
+        ----------
+        bin_edges: 1D float array
+            Edges of the instrumental bins (angstrom).
+        eff_collecting_area: float
+            Effective collecting area of the instrument (cm²).
+        """
+        config = configparser.ConfigParser()
+        config.read(detector_cfg)
+        det = config['detector']
+        self.mode = 'photometry' if 'nir' in detector_cfg else 'spectroscopy'
+        self.resolution = det.getfloat('resolution')
+        self.pix_scale = det.getfloat('pix_scale')
+        self.fwhm = det.getfloat('fwhm')
+        self.dark = det.getfloat('dark')
+        self.read_noise = det.getfloat('read_noise')
+        self.eff_area = eff_collecting_area
+
+        self.wl_min = det.getfloat('wl_min')
+        self.wl_max = det.getfloat('wl_max')
+
+        i_min = np.searchsorted(wl_edges, self.wl_min)
+        i_max = np.searchsorted(wl_edges, self.wl_max)
+        self._wl_edges = wl_edges[i_min:i_max]
+        # Center and half-widths of wavelength bins (angstrom):
+        self.wl = 0.5 * (wl_edges[i_min+1:i_max] + wl_edges[i_min:i_max-1])
+        self.half_widths = self.wl - wl_edges[i_min:i_max-1]
+
+        if self.mode == 'photometry':
+            self.wl = 0.5 * (self.wl_max + self.wl_min)
+            self.half_widths = np.array([0.5 * (self.wl_max - self.wl_min)])
+        self.nwave = len(self.wl)
+
+        # TBD: In future this might depend on {RA,dec} of targets
+        # Background flux (erg s-1 cm-2 A-1 arcsec-2)
+        wl_bkg, sky = np.loadtxt('background.txt', unpack=True)
+        self.bkg_model = si.interp1d(
+            wl_bkg, sky, kind='slinear', bounds_error=False,
+        )
+
+    def photon_spectrum(self, wl, flux):
+        """
+        Compute spectra in photons per second.
+
+        Parameters
+        ----------
+        wl: 1D float array
+            Input wavelength array (angstrom).
+        flux: 1D float array
+            Input flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹).
+        bkg_flux: 1D float array
+            Background flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹ pixel⁻¹).
+
+        Returns
+        -------
+        bin_flux: 1D float array
+            Integrated photon flux per bin (photons s⁻¹).
+        bin_bkg: 1D float array
+            Integrated background photon flux per bin (photons s⁻¹ pixel⁻¹).
+
+        Examples
+        --------
+        >>> resolution = 60_000.0
+        >>> wl = ps.constant_resolution_spectrum(2_450, 20_000, resolution)
+        >>> inst_resolution = 3_000.0
+        >>> bin_edges = ps.constant_resolution_spectrum(
+        >>>     2_500, 20_000, 2.0*inst_resolution,
+        >>> )
+
+        >>> # Load stellar SED
+        >>> file = './models/t06000g4.4/model.flx'
+        >>> sed_wl, flux, _ = np.loadtxt(file, unpack=True)
+        >>> sed_flux = np.interp(wl, sed_wl, flux)
+
+        >>> # Flux at instrumental resolution, in erg s-1 cm-2 A-1 at Earth
+        >>> conv_flux = ps.inst_convolution(
+        >>>     wl, sed_flux, inst_resolution, sampling_res=resolution,
+        >>> )
+        >>> star_R = 1.18 * pc.rsun
+        >>> star_dist = 48.3 * pc.parsec
+        >>> flux = conv_flux * (
+        >>>     (pc.c / pc.A) / (wl**2)
+        >>>     * 4.0 * np.pi
+        >>>     * (star_R/star_dist)**2.0
+        >>> )
+
+        >>> effective_area = 170.296
+        >>> wl_min = 6700
+        >>> wl_max = 7100
+        """
+        # Convert flux (erg s-1 cm-2 A-1) to photons s-1 A-1
+        photons = flux * wl*pc.A / (pc.c*pc.h) * self.eff_area
+
+        # Background flux (erg s-1 cm-2 A-1 pixel-1)
+        bkg_flux = self.bkg_model(wl) * self.pix_scale**2.0
+        # Convert flux (erg s-1 cm-2 A-1 pixel) to photons s-1 A-1 pixel-1
+        bkg_photons = bkg_flux * wl*pc.A / (pc.c*pc.h) * self.eff_area
+
+        # Integrate at each instrumental bin to get photons s-1
+        if self.mode == 'photometry':
+            mask = (wl>=self.wl_min) & (wl<=self.wl_max)
+            bin_flux = np.trapezoid(photons[mask], wl[mask])
+            bin_bkg = np.trapezoid(bkg_photons[mask], wl[mask])
+            return (
+                np.array([bin_flux]),
+                np.array([bin_bkg]),
+            )
+
+        # Spectroscopy: integrate (photons s-1 A-1 pix-1) to photons s-1 pix-1
+        wl_edges = self._wl_edges
+        bin_flux = np.zeros(self.nwave)
+        bin_bkg = np.zeros(self.nwave)
+        for i in range(self.nwave):
+            bin_mask = (
+                (wl>=wl_edges[i]) &
+                (wl<=wl_edges[i+1])
+            )
+            bin_flux[i] = np.trapezoid(photons[bin_mask], wl[bin_mask])
+            bin_bkg[i] = np.trapezoid(bkg_photons[bin_mask], wl[bin_mask])
+
+        return bin_flux, bin_bkg
+
+    def flux_stats(self, wl, flux):
+        """
+        Compute basic flux statistics within a wavelength interval.
+
+        Parameters
+        ----------
+        wl: 1D float array
+            Input wavelength array (angstrom).
+        flux: 1D float array
+            Input flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹).
+
+        Returns
+        -------
+        mean_flux: float
+            Mean flux within the wavelength range (erg s⁻¹ cm⁻² angstrom⁻¹).
+        max_flux: float
+            Maximum flux within the wavelength range (erg s⁻¹ cm⁻² angstrom⁻¹).
+        """
+        band = (wl > self.wl_min) & (wl < self.wl_max)
+        mean_flux = np.mean(flux[band])
+        max_flux = np.max(flux[band])
+        return mean_flux, max_flux
+
+    def snr_stats(self, flux, exp_time, n_obs):
+        """
+        Compute basic SNR statistics within a wavelength interval.
+
+        Parameters
+        ----------
+        flux: 1D float array
+            Integrated photon flux per bin (photons s⁻¹).
+        """
+        # integrate over time
+        total_flux = flux * exp_time * n_obs
+
+        # Poisson noise estimation
+        snr = total_flux / np.sqrt(total_flux)
+        snr_mean = np.mean(snr)
+        snr_max = np.max(snr)
+
+        # Assume t_in = t_out
+        # Assume flux_in approx flux_out
+        trans_uncer = np.sqrt(2.0) / snr_mean / pc.ppm
+
+        return snr_mean, snr_max, np.round(trans_uncer, 3)
 
 
 def simulate_spectrum(
@@ -102,8 +277,6 @@ def simulate_spectrum(
     >>> plt.xscale('log')
     >>> plt.xlim(2400, 17000)
     >>> plt.ylim(0.99, 1.12)
-
-
     """
     # Interpolate to WALTzER grid:
     model = si.interp1d(
@@ -225,155 +398,29 @@ def find_closest_teff(teff, base_dir='./models/'):
 
 
 
-def photon_spectrum(
-        wl, flux, effective_area, wl_min, wl_max, bin_edges,
-        photometry=False,
-    ):
-    """
-    Compute the spectrum in photons per second.
-
-    Parameters
-    ----------
-    wl: 1D float array
-        Input wavelength array (angstrom).
-    flux: 1D float array
-        Input flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹).
-    effective_area: float
-        Effective collecting area of the instrument (cm²).
-    wl_min: float
-        Minimum wavelength of the range to include (angstrom).
-    wl_max: float
-        Maximum wavelength of the range to include (angstrom).
-    bin_edges: 1D float array
-        Edges of the instrumental bins (angstrom).
-
-    Returns
-    -------
-    bin_wl: 1D float array
-        Central wavelength of each bin (angstrom).
-    bin_flux: 1D float array
-        Integrated photon flux per bin (photons s⁻¹).
-    half_widths: 1D float array
-        Half-width of each wavelength bin (angstrom).
-
-    Examples
-    --------
-    >>> resolution = 60_000.0
-    >>> wl = ps.constant_resolution_spectrum(2_450, 20_000, resolution)
-    >>> inst_resolution = 3_000.0
-    >>> bin_edges = ps.constant_resolution_spectrum(
-    >>>     2_500, 20_000, 2.0*inst_resolution,
-    >>> )
-
-    >>> # Load stellar SED
-    >>> file = './models/t06000g4.4/model.flx'
-    >>> sed_wl, flux, _ = np.loadtxt(file, unpack=True)
-    >>> sed_flux = np.interp(wl, sed_wl, flux)
-
-    >>> # Flux at instrumental resolution, in erg s-1 cm-2 A-1 at Earth
-    >>> conv_flux = ps.inst_convolution(
-    >>>     wl, sed_flux, inst_resolution, sampling_res=resolution,
-    >>> )
-    >>> star_R = 1.18 * pc.rsun
-    >>> star_dist = 48.3 * pc.parsec
-    >>> flux = conv_flux * (
-    >>>     (pc.c / pc.A) / (wl**2)
-    >>>     * 4.0 * np.pi
-    >>>     * (star_R/star_dist)**2.0
-    >>> )
-
-    >>> effective_area = 170.296
-    >>> wl_min = 6700
-    >>> wl_max = 7100
-    """
-    # Convert flux (erg s-1 cm-2 A-1) to photons s-1 A-1
-    photons = flux * wl*pc.A / (pc.c*pc.h) * effective_area
-
-    # Integrate at each instrumental bin to get photons s-1
-    if photometry:
-        mask = (wl>=wl_min) & (wl<=wl_max)
-        bin_wl = 0.5 * (wl_max + wl_min)
-        half_widths = 0.5 * (wl_max - wl_min)
-        bin_flux = np.trapezoid(photons[mask], wl[mask])
-        return (
-            np.array([bin_wl]),
-            np.array([bin_flux]),
-            np.array([half_widths])
-        )
-
-    # Spectroscopy
-    i_min = np.searchsorted(bin_edges, wl_min)
-    i_max = np.searchsorted(bin_edges, wl_max)
-    bin_wl = 0.5 * (bin_edges[i_min+1:i_max] + bin_edges[i_min:i_max-1])
-    half_widths = bin_wl - bin_edges[i_min:i_max-1]
-
-    nbins = len(bin_wl)
-    bin_flux = np.zeros(nbins)
-    for i in range(nbins):
-        bin_mask = (
-            (wl>=bin_edges[i_min+i]) &
-            (wl<=bin_edges[i_min+i+1])
-        )
-        bin_flux[i] = np.trapezoid(photons[bin_mask], wl[bin_mask])
-
-    return bin_wl, bin_flux, half_widths
-
-
-def flux_stats(wl, flux, wl_min, wl_max):
-    """
-    Compute basic flux statistics within a wavelength interval.
-
-    Parameters
-    ----------
-    wl: 1D float array
-        Input wavelength array (angstrom).
-    flux: 1D float array
-        Input flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹).
-    wl_min: float
-        Minimum wavelength of the range to include (angstrom).
-    wl_max: float
-        Maximum wavelength of the range to include (angstrom).
-
-    Returns
-    -------
-    mean_flux: float
-        Mean flux within the wavelength range (erg s⁻¹ cm⁻² angstrom⁻¹).
-    min_flux: float
-        Minimum flux within the wavelength range (erg s⁻¹ cm⁻² angstrom⁻¹).
-    max_flux: float
-        Maximum flux within the wavelength range (erg s⁻¹ cm⁻² angstrom⁻¹).
-    """
-    band = (wl > wl_min) & (wl < wl_max)
-    mean_flux = np.mean(flux[band])
-    max_flux = np.max(flux[band])
-    return mean_flux, max_flux
-
-
-def snr_stats(wl, flux, exp_time, n_obs):
+def snr_stats(flux, exp_time, n_obs):
     """
     Compute basic SNR statistics within a wavelength interval.
 
     Parameters
     ----------
-    effective_area = 170.296
-    wl_min = 6700
-    wl_max = 7100
-    fwhm = 2.0
-    photo = False
-
-    bin_wl, bin_flux, half_widths = photon_spectrum(
-        wl, flux, effective_area, wl_min, wl_max, bin_edges,
-    )
+    flux: 1D float array
+        Flux spectrum in photons s-1
+    exp_time: Float
+        In-transit exposure time (s).
+    n_obs: Integer
+        Number of transits.
     """
     # integrate over time
     total_flux = flux * exp_time * n_obs
 
     # Poisson noise estimation
     snr = total_flux / np.sqrt(total_flux)
-
     snr_mean = np.mean(snr)
     snr_max = np.max(snr)
-    # Assume t_in=t_out and flux_in approx. flux_out:
+
+    # Assume t_in = t_out
+    # Assume flux_in approx flux_out
     trans_uncer = np.sqrt(2.0) / snr_mean / pc.ppm
 
     return snr_mean, snr_max, np.round(trans_uncer, 3)
@@ -434,6 +481,16 @@ def waltzer_snr(
     -----
     Can also be run from the command line, e.g.:
     python snr_waltzer.py target_list_20250327.csv waltzer_snr.csv
+
+    Example (TBD while we build this machine)
+    -------
+    >>> import snr_waltzer as w
+    >>> from snr_waltzer import *
+    >>> diameter = 30.0
+    >>> csv_file = 'target_list_20250327.csv'
+    >>> efficiency = 0.6
+    >>> t_dur = 2.5
+    >>> n_obs = 10
     """
     # Effective area calculations
     primary_area = np.pi * (0.5*diameter)**2.0
@@ -470,16 +527,22 @@ def waltzer_snr(
         R_d1 * R_d2 * BB_lens * BB_detQE
     )
 
-    # Wavelength ranges per band (angstrom)
-    nuv_wl_min = 2500.0
-    nuv_wl_max = 3300.0
+    # WALTzER resolution (FWHM) and wavelength grid (angstrom)
+    inst_resolution = 3_000.0
+    bin_edges = ps.constant_resolution_spectrum(
+        2_500, 20_000, resolution=2.0*inst_resolution,
+    )
 
-    vis_wl_min = 4160.0
-    vis_wl_max = 8200.0
+    detector_cfg = 'detectors/waltzer_nuv.cfg'
+    nuv_det = Detector(detector_cfg, bin_edges, NUV_EFF_AREA)
+    detector_cfg = 'detectors/waltzer_vis.cfg'
+    vis_det = Detector(detector_cfg, bin_edges, VIS_EFF_AREA)
+    detector_cfg = 'detectors/waltzer_nir.cfg'
+    nir_det = Detector(detector_cfg, bin_edges, NIR_EFF_AREA)
 
-    nir_wl_min =  9000.0
-    nir_wl_max = 16000.0
-
+    # Higher resolution for models (will be bin down to WALTzER)
+    resolution = 60_000.0
+    wl = ps.constant_resolution_spectrum(2_450, 20_000, resolution=resolution)
 
     # Target list file path
     data = pd.read_csv(csv_file, delimiter=',', comment='#')
@@ -487,7 +550,6 @@ def waltzer_snr(
 
     # Extract required columns into individual arrays
     planet_names = data['pl_name']
-    #transit_depth = data['pl_trandep']
     transit_dur = data['pl_trandur']
     stellar_temps = data['st_teff']
     stellar_radii = data['st_rad']
@@ -505,14 +567,6 @@ def waltzer_snr(
         # Use fixed transit duration for all targets
         exp_time = (t_dur * 3600) * efficiency
         exp_time = np.tile(exp_time, ntargets)
-
-    resolution = 60_000.0
-    wl = ps.constant_resolution_spectrum(2_450, 20_000, resolution=resolution)
-    # WALTzER resolution (FWHM) and wavelength grid (angstrom)
-    inst_resolution = 3_000.0
-    bin_edges = ps.constant_resolution_spectrum(
-        2_500, 20_000, resolution=2.0*inst_resolution,
-    )
 
     # Read models files
     cache_seds = {}
@@ -538,7 +592,7 @@ def waltzer_snr(
             )
             cache_seds[file] = conv_flux
 
-        # Convert flux from XX to erg s-1 cm-2 A-1
+        # Convert flux from XX[?] to erg s-1 cm-2 A-1
         # integrate over steradian
         # and evaluate at Earth
         flux = conv_flux * (
@@ -547,34 +601,29 @@ def waltzer_snr(
             * (star_R/star_dist)**2.0
         )
 
-        # Calculations for bands
-        nuv_wl, nuv_flux, nuv_half_width = photon_spectrum(
-            wl, flux, NUV_EFF_AREA, nuv_wl_min, nuv_wl_max, bin_edges,
+        # Fluxes in photons per second
+        nuv_flux, nuv_background = nuv_det.photon_spectrum(wl, flux)
+        vis_flux, vis_background = vis_det.photon_spectrum(wl, flux)
+        nir_flux, nir_background = nir_det.photon_spectrum(wl, flux)
+
+        nuv_flux_stats = nuv_det.flux_stats(wl, flux)
+        vis_flux_stats = vis_det.flux_stats(wl, flux)
+        nir_flux_stats = nir_det.flux_stats(wl, flux)
+
+        nuv_snr_stats = snr_stats(nuv_flux, exp_time[i], n_obs)
+        vis_snr_stats = snr_stats(vis_flux, exp_time[i], n_obs)
+        nir_snr_stats = snr_stats(nir_flux, exp_time[i], n_obs)[1:]
+
+        wl_half_widths = (
+            nuv_det.half_widths,
+            vis_det.half_widths,
+            nir_det.half_widths,
         )
-
-        vis_wl, vis_flux, vis_half_width = photon_spectrum(
-            wl, flux, VIS_EFF_AREA, vis_wl_min, vis_wl_max, bin_edges,
-        )
-
-        nir_wl, nir_flux, nir_half_width = photon_spectrum(
-            wl, flux, NIR_EFF_AREA, nir_wl_min, nir_wl_max, bin_edges,
-            photometry=True,
-        )
-
-        nuv_flux_stats = flux_stats(wl, flux, nuv_wl_min, nuv_wl_max)
-        vis_flux_stats = flux_stats(wl, flux, vis_wl_min, vis_wl_max)
-        nir_flux_stats = flux_stats(wl, flux, nir_wl_min, nir_wl_max)
-
-        nuv_snr_stats = snr_stats(nuv_wl, nuv_flux, exp_time[i], n_obs)
-        vis_snr_stats = snr_stats(vis_wl, vis_flux, exp_time[i], n_obs)
-        nir_snr_stats = snr_stats(nir_wl, nir_flux, exp_time[i], n_obs)[1:]
-
         spectra[target] = {
-            'wl': (nuv_wl, vis_wl, nir_wl),
+            'wl': (nuv_det.wl, vis_det.wl, nir_det.wl),
             'e_flux': (nuv_flux, vis_flux, nir_flux),
-            'wl_half_width': (nuv_half_width, vis_half_width, nir_half_width),
+            'wl_half_width': wl_half_widths,
             'transit_dur': transit_dur[i],
-            #'transit_depth': transit_depth[i],
         }
 
         # Save results
@@ -627,9 +676,9 @@ def waltzer_snr(
             f.write(f"# total in-transit time (for stats): {t_dur} h\n")
 
         f.write("#\n# Wavelength ranges per band (angstrom)\n")
-        f.write(f"# NUV  {nuv_wl_min} {nuv_wl_max}\n")
-        f.write(f"# VIS  {vis_wl_min} {vis_wl_max}\n")
-        f.write(f"# NIR  {nir_wl_min} {nir_wl_max}\n#\n")
+        f.write(f"# NUV  {nuv_det.wl_min} {nuv_det.wl_max}\n")
+        f.write(f"# VIS  {vis_det.wl_min} {vis_det.wl_max}\n")
+        f.write(f"# NIR  {nir_det.wl_min} {nir_det.wl_max}\n#\n")
         f.write(','.join(header) + '\n')
         f.write(', '.join(units) + '\n')
         np.savetxt(f, output_data, delimiter=",", fmt="%s")
@@ -637,7 +686,6 @@ def waltzer_snr(
     p_file = output_csv.replace('.csv', '.pickle')
     with open(p_file, 'wb') as handle:
         pickle.dump(spectra, handle, protocol=4)
-
 
 
 def is_csv_file(filename: str) -> str:
