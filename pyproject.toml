@@ -1,0 +1,56 @@
+[build-system]
+requires = [
+    "setuptools>=77.0.3",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "waltzer_etc"
+description = "Exposure Time Calculator for WALTzER Mission Concept"
+readme = "README.md"
+license = "GPL-2.0-or-later"
+license-files = [ "LICENSE" ]
+
+#https://packaging.python.org/en/latest/guides/single-sourcing-package-version/
+dynamic = ["version"]
+
+requires-python = ">=3.9"
+authors = [
+  {name = "Patricio Cubillos", email = "pcubillos@fulbrightmail.org"}
+]
+dependencies = [
+    'numpy>=2.0',
+    'pandas',
+    'synphot',
+    'pyratbay>=2.0.0',
+]
+
+[project.urls]
+"Homepage" = "https://github.com/pcubillos/waltzer_etc"
+
+#https://setuptools.pypa.io/en/stable/userguide/entry_point.html#console-scripts
+[project.scripts]
+waltz = "waltzer_etc.__main__:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "waltzer_etc.version.__version__"}
+
+[tool.setuptools]
+include-package-data = true
+
+#https://setuptools.pypa.io/en/stable/userguide/package_discovery.html
+[tool.setuptools.packages]
+find = {namespaces = false}  # Take only folders with a __init__.py file
+
+#https://setuptools.pypa.io/en/stable/userguide/datafiles.html
+[tool.setuptools.package-data]
+"waltzer_etc.data" = [
+    "background.txt",
+    "johnson_v.dat",
+]
+"waltzer_etc.data.detectors" = ["*"]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:datetime.datetime.utcfromtimestamp:DeprecationWarning",
+]

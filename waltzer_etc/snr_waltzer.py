@@ -1,21 +1,13 @@
-#! /usr/bin/env python
 # Copyright (c) 2025 Sreejith and Patricio
 # LICENSE TBD
-# -*- coding: utf-8 -*-
 
 __all__ = [
     'Detector',
     'simulate_spectrum',
-    'find_closest_teff',
-    'snr_stats',
     'waltzer_snr',
 ]
 
-import argparse
 import configparser
-import sys
-import os
-import re
 import pickle
 import random
 
@@ -24,6 +16,9 @@ import pandas as pd
 import pyratbay.constants as pc
 import pyratbay.spectrum as ps
 import scipy.interpolate as si
+
+from .utils import ROOT
+from . import sed
 
 
 class Detector():
@@ -61,13 +56,13 @@ class Detector():
         self.half_widths = self.wl - wl_edges[i_min:i_max-1]
 
         if self.mode == 'photometry':
-            self.wl = 0.5 * (self.wl_max + self.wl_min)
+            self.wl = np.array([0.5 * (self.wl_max + self.wl_min)])
             self.half_widths = np.array([0.5 * (self.wl_max - self.wl_min)])
         self.nwave = len(self.wl)
 
         # TBD: In future this might depend on {RA,dec} of targets
         # Background flux (erg s-1 cm-2 A-1 arcsec-2)
-        wl_bkg, sky = np.loadtxt('background.txt', unpack=True)
+        wl_bkg, sky = np.loadtxt(f'{ROOT}/data/background.txt', unpack=True)
         self.bkg_model = si.interp1d(
             wl_bkg, sky, kind='slinear', bounds_error=False,
         )
@@ -177,14 +172,18 @@ class Detector():
         max_flux = np.max(flux[band])
         return mean_flux, max_flux
 
-    def snr_stats(self, flux, exp_time, n_obs):
+    def snr_stats(self, flux, exp_time, n_obs=1, bkg_flux=None):
         """
         Compute basic SNR statistics within a wavelength interval.
 
         Parameters
         ----------
         flux: 1D float array
-            Integrated photon flux per bin (photons s⁻¹).
+            Photon flux per spectral bin (photons s⁻¹).
+        exp_time: Float
+            In-transit exposure time (s).
+        n_obs: Integer
+            Number of transits.
         """
         # integrate over time
         total_flux = flux * exp_time * n_obs
@@ -366,66 +365,6 @@ def simulate_spectrum(
     return walz_wl, walz_spec, walz_err, walz_widths
 
 
-def find_closest_teff(teff, base_dir='./models/'):
-    """
-    Find folder in base_dir with closest temperature to teff.
-
-    Examples
-    --------
-    teff = 8000.0
-    """
-    temp_pattern = re.compile(r't(\d+)g[\d\.]+', re.IGNORECASE)
-    folders = sorted([
-        folder
-        for folder in os.listdir(base_dir)
-        if os.path.isdir(os.path.join(base_dir, folder))
-        if temp_pattern.search(folder)
-    ])
-    if len(folders) == 0:
-        raise ValueError(
-            f"No valid folders found in directory: {repr(base_dir)}"
-        )
-
-    temps = [
-        folder[1+folder.index('t'):folder.index('g')]
-        for folder in folders
-    ]
-    temps = np.array(temps, float)
-
-    i = np.argmin(np.abs(temps - teff))
-    file = os.path.join(base_dir, folders[i], 'model.flx')
-    return file, temps[i]
-
-
-
-def snr_stats(flux, exp_time, n_obs):
-    """
-    Compute basic SNR statistics within a wavelength interval.
-
-    Parameters
-    ----------
-    flux: 1D float array
-        Flux spectrum in photons s-1
-    exp_time: Float
-        In-transit exposure time (s).
-    n_obs: Integer
-        Number of transits.
-    """
-    # integrate over time
-    total_flux = flux * exp_time * n_obs
-
-    # Poisson noise estimation
-    snr = total_flux / np.sqrt(total_flux)
-    snr_mean = np.mean(snr)
-    snr_max = np.max(snr)
-
-    # Assume t_in = t_out
-    # Assume flux_in approx flux_out
-    trans_uncer = np.sqrt(2.0) / snr_mean / pc.ppm
-
-    return snr_mean, snr_max, np.round(trans_uncer, 3)
-
-
 def waltzer_snr(
          csv_file=None,
          output_csv="waltzer_snr.csv",
@@ -485,7 +424,9 @@ def waltzer_snr(
     Example (TBD while we build this machine)
     -------
     >>> import snr_waltzer as w
-    >>> from snr_waltzer import *
+    >>> from waltzer_etc.snr_waltzer import *
+    >>> from waltzer_etc.utils import ROOT
+    >>> from waltzer_etc.normalization import normalize_vega
     >>> diameter = 30.0
     >>> csv_file = 'target_list_20250327.csv'
     >>> efficiency = 0.6
@@ -533,11 +474,11 @@ def waltzer_snr(
         2_500, 20_000, resolution=2.0*inst_resolution,
     )
 
-    detector_cfg = 'detectors/waltzer_nuv.cfg'
+    detector_cfg = f'{ROOT}/data/detectors/waltzer_nuv.cfg'
     nuv_det = Detector(detector_cfg, bin_edges, NUV_EFF_AREA)
-    detector_cfg = 'detectors/waltzer_vis.cfg'
+    detector_cfg = f'{ROOT}/data/detectors/waltzer_vis.cfg'
     vis_det = Detector(detector_cfg, bin_edges, VIS_EFF_AREA)
-    detector_cfg = 'detectors/waltzer_nir.cfg'
+    detector_cfg = f'{ROOT}/data/detectors/waltzer_nir.cfg'
     nir_det = Detector(detector_cfg, bin_edges, NIR_EFF_AREA)
 
     # Higher resolution for models (will be bin down to WALTzER)
@@ -568,51 +509,51 @@ def waltzer_snr(
         exp_time = (t_dur * 3600) * efficiency
         exp_time = np.tile(exp_time, ntargets)
 
+        print('Target Name  V_mag  Teff  SNR_NUV SNR_VIS SNR_NIR (ppm)')
     # Read models files
     cache_seds = {}
     output_data = []
     spectra = {}
+    print('Target  Name          V_mag   Teff  SNR: NUV     VIS     NIR (ppm)')
     for i in range(ntargets):
         target = planet_names[i]
-        print(f'Target {i+1}/{ntargets}: {repr(target)}')
-        star_R = stellar_radii[i] * pc.rsun
-        star_dist = distances[i] * pc.parsec
         # Load SED model spectrum based on temperature
         teff = stellar_temps[i]
-        file, teff_match = find_closest_teff(teff)
-        if file in cache_seds:
-            sed_flux = cache_seds[file]
+        sed_file, teff_match = sed.find_closest_teff(teff)
+        if sed_file in cache_seds:
+            sed_flux = cache_seds[sed_file]
         else:
-            # Load and interpolate SED flux
-            spectrum = np.loadtxt(file, unpack=True)
-            sed_wl, flux = spectrum[0:2]
-            sed_flux = np.interp(wl, sed_wl, flux)
-            conv_flux = ps.inst_convolution(
-                wl, sed_flux, inst_resolution, sampling_res=resolution,
+            # Load SED flux
+            sed_wl, flux = sed.load_sed(file=sed_file)
+            # Interpolate to regular grid and apply waltzer resolution
+            flux = np.interp(wl, sed_wl, flux)
+            sed_flux = ps.inst_convolution(
+                wl, flux, inst_resolution, sampling_res=resolution,
             )
-            cache_seds[file] = conv_flux
+            cache_seds[sed_file] = sed_flux
 
-        # Convert flux from XX[?] to erg s-1 cm-2 A-1
-        # integrate over steradian
-        # and evaluate at Earth
-        flux = conv_flux * (
-            (pc.c / pc.A) / (wl**2)
-            * 4.0 * np.pi
-            * (star_R/star_dist)**2.0
-        )
+        # Normalize according to Vmag
+        flux = sed.normalize_vega(wl, sed_flux, v_mags[i])
+
+        nuv_flux_stats = nuv_det.flux_stats(wl, flux)
+        vis_flux_stats = vis_det.flux_stats(wl, flux)
+        nir_flux_stats = nir_det.flux_stats(wl, flux)
 
         # Fluxes in photons per second
         nuv_flux, nuv_background = nuv_det.photon_spectrum(wl, flux)
         vis_flux, vis_background = vis_det.photon_spectrum(wl, flux)
         nir_flux, nir_background = nir_det.photon_spectrum(wl, flux)
 
-        nuv_flux_stats = nuv_det.flux_stats(wl, flux)
-        vis_flux_stats = vis_det.flux_stats(wl, flux)
-        nir_flux_stats = nir_det.flux_stats(wl, flux)
-
-        nuv_snr_stats = snr_stats(nuv_flux, exp_time[i], n_obs)
-        vis_snr_stats = snr_stats(vis_flux, exp_time[i], n_obs)
-        nir_snr_stats = snr_stats(nir_flux, exp_time[i], n_obs)[1:]
+        # snr_stats(flux, exp_time, n_obs, bkg_flux=None)
+        nuv_snr_stats = nuv_det.snr_stats(nuv_flux, exp_time[i], n_obs)
+        vis_snr_stats = vis_det.snr_stats(vis_flux, exp_time[i], n_obs)
+        nir_snr_stats = nir_det.snr_stats(nir_flux, exp_time[i], n_obs)[1:]
+        print(
+            f'{i+1:2d}/{ntargets}: {repr(target):15} '
+            f'{v_mags[i]:4.2f}  {teff_match:5.0f}  '
+            f'{nuv_snr_stats[-1]:8.1f}  {vis_snr_stats[-1]:6.1f}  '
+            f'{nir_snr_stats[-1]:6.1f}'
+        )
 
         wl_half_widths = (
             nuv_det.half_widths,
@@ -686,83 +627,3 @@ def waltzer_snr(
     p_file = output_csv.replace('.csv', '.pickle')
     with open(p_file, 'wb') as handle:
         pickle.dump(spectra, handle, protocol=4)
-
-
-def is_csv_file(filename: str) -> str:
-    """Validate that filename string is a .csv file."""
-    if not filename.lower().endswith(".csv"):
-        error = f"File '{filename}' must have .csv extension."
-        raise argparse.ArgumentTypeError(error)
-    return filename
-
-
-def parse_args():
-    """
-    Command-line parser for call from the prompt.
-    """
-    parser = argparse.ArgumentParser(
-        description="WALTzER SNR and ETC."
-    )
-
-    # Required positional arguments
-    parser.add_argument(
-        "input_file",
-        type=is_csv_file,
-        help="Input CSV file with target list.",
-    )
-    parser.add_argument(
-        "output_file",
-        type=is_csv_file,
-        help="Output CSV file with SNR statistics.",
-    )
-
-    # Optional arguments
-    parser.add_argument(
-        "--nobs",
-        type=int,
-        default=10,
-        help="Number of observations (default: 1).",
-    )
-    parser.add_argument(
-        "--diam",
-        type=float,
-        default=30.0,
-        help="Telescope diameter in cm (default: 30.0).",
-    )
-    parser.add_argument(
-        "--eff",
-        type=float,
-        default=0.6,
-        help="Telescope duty-cycle efficiency (default: 0.6).",
-    )
-    parser.add_argument(
-        "--tdur",
-        type=float,
-        default=None,
-        help="Transit duration in hours; if set, calculate statistics assuming a fixed transit duration for all targets. Else, take values from input .csv target list. (default: None).",
-    )
-
-    args = parser.parse_args()
-    return args
-
-
-if __name__ == "__main__":
-    """
-    WALTzER Exposure time calculator
-
-    Usage
-    -----
-    From the command line, run:
-    python snr_waltzer.py target_list_20250327.csv  waltzer_snr_test.csv
-    """
-
-    args = parse_args()
-    waltzer_snr(
-         csv_file=args.input_file,
-         output_csv=args.output_file,
-         diameter=args.diam,
-         efficiency=args.eff,
-         t_dur=args.tdur,
-         n_obs=args.nobs,
-    )
-    sys.exit(0)
