@@ -1,13 +1,12 @@
 # Copyright (c) 2025 Sreejith and Patricio
 # LICENSE TBD
 
-__all__ = [
-    'waltzer_snr',
-]
-
 from .version import __version__
-from .snr_waltzer import waltzer_snr
+from .snr_waltzer import *
 
+__all__ = (
+    snr_waltzer.__all__
+)
 
 # Clean up top-level namespace--delete everything that isn't in __all__
 # or is a magic attribute, and that isn't a submodule of this package

@@ -21,33 +21,99 @@ from .utils import ROOT
 from . import sed
 
 
+DEFAULT_DETS = {
+    'nuv': f'{ROOT}/data/detectors/waltzer_nuv.cfg',
+    'vis': f'{ROOT}/data/detectors/waltzer_vis.cfg',
+    'nir': f'{ROOT}/data/detectors/waltzer_nir.cfg',
+}
+
+
+def calc_collecting_area(diameter, band):
+    """
+    Calculate the effective collecting area of the telescope+detector
+    """
+    primary_area = np.pi * (0.5*diameter)**2.0
+    Rprim    = 0.90  # Telescope primary reflectance in %
+    Rsec     = 0.90  # Telescope secondary reflectance in %
+    Sec_obstr= 0.85  # Telescope secondary obstruction in % (1-Obstruction)
+    R_d1     = 0.80  # Dichroic 1 Reflectance/Transmission in %
+    R_d2     = 0.80  # Dichroic 2 Reflectance/Transmission in %
+
+    R_uvfold = 1.00  # UV fold reflectance in %
+    R_uvgr   = 0.90  # UV grating reflectance in %
+    Uv_geff  = 0.65  # UV grating effeciency in %
+    Uv_detQE = 0.55  # UV detector QE in %
+
+    R_opfold = 0.90  # Optical fold reflectance in %
+    R_opgr   = 0.90  # Optical grating reflectance in %
+    Op_geff  = 0.75  # Optical grating effeciency in %
+    Op_detQE = 0.90  # Optical detector QE in %
+
+    BB_lens  = 0.90  # IR Broad band lens transmission in % IN REALITY, A FOLD
+    BB_detQE = 0.85  # IR Broad band detector QE in %
+
+    # Effective collecing areas in cm^2
+    if band == 'nuv':
+        eff_area = (
+            primary_area * Rprim * Rsec * Sec_obstr *
+            R_d1 * R_uvfold * R_uvgr * Uv_geff * Uv_detQE
+        )
+        return eff_area
+
+    if band == 'vis':
+        eff_area = (
+            primary_area * Rprim * Rsec * Sec_obstr *
+            R_d1 * R_d2 * R_opfold * R_opgr * Op_geff * Op_detQE
+        )
+        return eff_area
+
+    if band == 'nir':
+        eff_area = (
+            primary_area * Rprim * Rsec * Sec_obstr *
+            R_d1 * R_d2 * BB_lens * BB_detQE
+        )
+        return eff_area
+
+    raise ValueError(f'Invalid band {repr(band)}')
+
+
 class Detector():
-    def __init__(self, detector_cfg, wl_edges, eff_collecting_area):
+    def __init__(self, detector_cfg, diameter=30.0):
         """
         detector_cfg = 'detectors/waltzer_nuv.cfg'
         det = Detector(detector_cfg)
 
         Parameters
         ----------
-        bin_edges: 1D float array
+        wl_edges: 1D float array
             Edges of the instrumental bins (angstrom).
         eff_collecting_area: float
             Effective collecting area of the instrument (cm²).
         """
+        if detector_cfg in DEFAULT_DETS:
+            detector_cfg = DEFAULT_DETS[detector_cfg]
+
         config = configparser.ConfigParser()
         config.read(detector_cfg)
         det = config['detector']
-        self.mode = 'photometry' if 'nir' in detector_cfg else 'spectroscopy'
+        self.band = det.get('band')
+        self.mode = det.get('mode')
+
+        self.eff_area = calc_collecting_area(diameter, self.band)
+
         self.resolution = det.getfloat('resolution')
         self.pix_scale = det.getfloat('pix_scale')
-        self.fwhm = det.getfloat('fwhm')
         self.dark = det.getfloat('dark')
         self.read_noise = det.getfloat('read_noise')
-        self.eff_area = eff_collecting_area
+        self.exp_time = det.getfloat('exp_time')
+        self.aperture = det.getint('aperture')
 
         self.wl_min = det.getfloat('wl_min')
         self.wl_max = det.getfloat('wl_max')
 
+        wl_edges = ps.constant_resolution_spectrum(
+            2_500, 20_000, resolution=2.0*self.resolution,
+        )
         i_min = np.searchsorted(wl_edges, self.wl_min)
         i_max = np.searchsorted(wl_edges, self.wl_max)
         self._wl_edges = wl_edges[i_min:i_max]
@@ -89,6 +155,7 @@ class Detector():
 
         Examples
         --------
+        >>> # TBD
         >>> resolution = 60_000.0
         >>> wl = ps.constant_resolution_spectrum(2_450, 20_000, resolution)
         >>> inst_resolution = 3_000.0
@@ -149,6 +216,7 @@ class Detector():
 
         return bin_flux, bin_bkg
 
+
     def flux_stats(self, wl, flux):
         """
         Compute basic flux statistics within a wavelength interval.
@@ -172,32 +240,143 @@ class Detector():
         max_flux = np.max(flux[band])
         return mean_flux, max_flux
 
-    def snr_stats(self, flux, exp_time, n_obs=1, bkg_flux=None):
+
+    def calc_total_noise(self, wl, flux, integ_time=1.0):
         """
-        Compute basic SNR statistics within a wavelength interval.
+        Compute the time-integrated source flux and total variance spectra.
 
         Parameters
         ----------
+        wl: 1D float array
+            Input wavelength array (angstrom).
         flux: 1D float array
-            Photon flux per spectral bin (photons s⁻¹).
-        exp_time: Float
+            Input flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹).
+        integ_time: Float
+            Total integration time (s).  Leave as integ_time=1.0 to
+            obtain the values per second.
+
+        Returns
+        -------
+        source: float
+            Source's time-integrated flux spectrum in number of photons.
+        variance: float
+            Observation's variance in number of photons.
+        """
+        variances = self.calc_noise(wl, flux, integ_time)
+
+        source = variances[0]
+        variance = np.sum(np.array(variances), axis=0)
+        return source, variance
+
+
+    def calc_noise(self, wl, flux, integ_time=1.0):
+        """
+        Compute the time-integrated components of the noise:
+        source, background, dark, and read noise.
+
+        Parameters
+        ----------
+        wl: 1D float array
+            Input wavelength array (angstrom).
+        flux: 1D float array
+            Input flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹).
+        integ_time: Float
+            Total integration time (s).
+
+        Returns
+        -------
+        var_source: 1D float array
+            Source Poisson noise variance.
+        var_background: 1D float array
+            Background Poisson noise variance.
+        var_dark: 1D float array
+            Dark-current variance.
+        var_read: 1D float array
+            Read-noise variance.
+        """
+        if integ_time is None:
+            integ_time = 1.0
+        # For the time being, ignore the fact that nreads should be integer
+        nreads = integ_time / self.exp_time
+
+        # Fluxes in photons per second
+        e_flux, e_background = self.photon_spectrum(wl, flux)
+
+        # integrate over time
+        total_flux = e_flux * integ_time
+        var_source = np.abs(total_flux)
+
+        # Aperture sizes
+        aperture_radius = self.aperture//2
+
+        # Number of pixels in source and in sky-background
+        if self.mode == 'photometry':
+            npix = int(np.pi*aperture_radius**2)
+            sky_in = aperture_radius
+            sky_out = 2*aperture_radius
+            nsky = int(np.pi * (sky_out**2 - sky_in**2))
+        elif self.mode == 'spectroscopy':
+            npix = 2*aperture_radius
+            sky_in = aperture_radius
+            sky_out = 3*aperture_radius
+            nsky = 2 * (sky_out-sky_in)
+        else:
+            raise ValueError()
+
+        # Background number of photons
+        var_background = npix*(1+npix/nsky) * e_background * integ_time
+
+        # Dark number of photons
+        var_dark = npix*(1+npix/nsky) * self.dark * integ_time
+        var_dark = np.tile(var_dark, self.nwave)
+
+        # Total number of photons per pixel
+        var_read = npix*(1+npix/nsky) * self.read_noise * nreads
+        var_read = np.tile(var_read, self.nwave)
+
+        return (
+            var_source,
+            var_background,
+            var_dark,
+            var_read,
+        )
+
+
+    def snr_stats(self, wl, flux, integ_time):
+        """
+        Compute basic SNR statistics.
+
+        Parameters
+        ----------
+        wl: 1D float array
+            Input wavelength array (angstrom).
+        flux: 1D float array
+            Input flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹).
+        integ_time: Float
             In-transit exposure time (s).
-        n_obs: Integer
-            Number of transits.
+
+        Returns
+        -------
+        snr_mean: Float
+            Mean signal-to-noise of the flux measurement.
+        snr_max: Float
+            Max signal-to-noise of the flux measurement.
+        transit_uncert: Float
+            Mean transit-depth uncertainty (ppm) assuming tdur=integ_time.
         """
         # integrate over time
-        total_flux = flux * exp_time * n_obs
+        total_flux, variance = self.calc_total_noise(wl, flux, integ_time)
 
-        # Poisson noise estimation
-        snr = total_flux / np.sqrt(total_flux)
+        # Signal-to-noise estimation
+        snr = total_flux / np.sqrt(variance)
         snr_mean = np.mean(snr)
         snr_max = np.max(snr)
 
         # Assume t_in = t_out
         # Assume flux_in approx flux_out
-        trans_uncer = np.sqrt(2.0) / snr_mean / pc.ppm
+        transit_uncert = np.sqrt(2.0) / snr_mean / pc.ppm
 
-        return snr_mean, snr_max, np.round(trans_uncer, 3)
+        return snr_mean, snr_max, transit_uncert
 
 
 def simulate_spectrum(
@@ -211,7 +390,7 @@ def simulate_spectrum(
     Parameters
     ----------
     tso: Dictionary
-        A planet's model, output from running snr_waltzer.py.
+        A planet's model, output from running waltz (stage 1).
     depth_model: 2D float array
         Transit depth model, array of shape [2,nwave] with:
         - wavelength (angstrom)
@@ -224,6 +403,8 @@ def simulate_spectrum(
         If not None, overwrite transit duration (h) from tso dictionary.
     efficiency: Float
         WALTZER duty cycle efficiency.
+    noiseless: Bool
+        Set to True to prevent adding scatter the simulated spectrum.
 
     Returns
     -------
@@ -241,10 +422,10 @@ def simulate_spectrum(
     >>> import pickle
     >>> import numpy as np
     >>> import pyratbay.constants as pc
-    >>> import snr_waltzer as w
+    >>> import waltzer_etc as w
 
     >>> # Load WALTzER SNR output pickle file
-    >>> tso_file = 'waltzer_snr_test.pickle'
+    >>> tso_file = 'waltzer_snr.pickle'
     >>> with open(tso_file, 'rb') as handle:
     >>>     spectra = pickle.load(handle)
     >>> tso = spectra['HD 209458 b']
@@ -253,6 +434,7 @@ def simulate_spectrum(
     >>> tdepth_file = 'transit_saturn_1600K_clear.dat'
     >>> depth_model = np.loadtxt(tdepth_file, unpack=True)
 
+    >>> # Simulate WALTzER observation
     >>> sim = w.simulate_spectrum(
     >>>     tso, depth_model,
     >>>     n_obs=10,
@@ -260,22 +442,46 @@ def simulate_spectrum(
     >>>     noiseless=False,
     >>> )
 
+    >>> # Show noised-up WALTzER spectrum
     >>> waltzer_wl, waltzer_spec, waltzer_err, waltzer_widths = sim
     >>> fig = plt.figure(0)
     >>> plt.clf()
-    >>> fig.set_size_inches(8,4)
+    >>> fig.set_size_inches(8,5)
+    >>> plt.subplots_adjust(0.1,0.1,0.98,0.98, hspace=0.15)
+    >>> ax = plt.subplot(3,1,(1,2))
     >>> plt.plot(depth_model[0], depth_model[1]/pc.percent, color='xkcd:blue')
     >>> bands = ['NUV', 'VIS', 'NIR']
     >>> for j,band in enumerate(bands):
     >>>     plt.errorbar(
     >>>         waltzer_wl[j], waltzer_spec[j]/pc.percent,
     >>>         waltzer_err[j]/pc.percent, xerr=waltzer_widths[j],
-    >>>         fmt='o', ecolor='cornflowerblue', color='royalblue',
+    >>>         fmt='o', ecolor='salmon', color='xkcd:orangered',
     >>>         mfc='w', ms=4, zorder=0,
     >>>     )
     >>> plt.xscale('log')
+    >>> ax.set_xticks([2500, 3000, 4000, 6000, 8000, 10000, 16000])
+    >>> ax.set_xticklabels([])
+    >>> ax.tick_params(which='both', direction='in')
     >>> plt.xlim(2400, 17000)
     >>> plt.ylim(0.99, 1.12)
+    >>> ax.set_ylabel('Transit depth (%)')
+
+    >>> ax = plt.subplot(3,1,3)
+    >>> for j,band in enumerate(bands):
+    >>>     ax.errorbar(
+    >>>         waltzer_wl[j], waltzer_err[j]/pc.ppm, xerr=waltzer_widths[j],
+    >>>         fmt='o', ecolor='salmon', color='tomato',
+    >>>         mfc='w', ms=4, zorder=0,
+    >>>     )
+    >>> ax.set_xscale('log')
+    >>> ax.set_yscale('log')
+    >>> ax.set_xlim(2400, 17000)
+    >>> ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+    >>> ax.xaxis.set_major_formatter(matplotlib.ticker.ScalarFormatter())
+    >>> ax.set_xticks([2500, 3000, 4000, 5000, 7000, 10000, 16000])
+    >>> ax.tick_params(which='both', direction='in')
+    >>> ax.set_xlabel('Wavelength (um)')
+    >>> ax.set_ylabel('Depth error (ppm)')
     """
     # Interpolate to WALTzER grid:
     model = si.interp1d(
@@ -294,17 +500,23 @@ def simulate_spectrum(
     walz_err = []
     walz_widths = []
     for j in range(3):
-        flux = tso['e_flux'][j]
-        half_width = tso['wl_half_width'][j]
         wl = tso['wl'][j]
+        half_width = tso['wl_half_width'][j]
+        flux = tso['e_flux'][j]
+        var = tso['var'][j]
 
-        # Transit
+        # Transit depth and fluxes [e- per second]
         depth = model(wl)
-        flux_out = flux * n_obs * efficiency
-        flux_in = (1.0-depth) * flux * n_obs * efficiency
-        # Poisson noise estimation
-        var_out = flux_out*dt_out
-        var_in = flux_in*dt_in
+        flux_out = flux
+        flux_in = flux * (1.0-depth)
+
+        # Total times integrating in- and out-of-transit
+        t_out = dt_out * n_obs * efficiency
+        t_in = dt_in * n_obs * efficiency
+
+        # Noise estimation for total number of e- collected
+        var_out = var * t_out
+        var_in = var * (1.0-depth) * t_in
 
         # Photometry
         if len(wl) == 1:
@@ -343,10 +555,12 @@ def simulate_spectrum(
                 bin_vout[i] = np.sum(var_out[bin_mask])
                 bin_vin[i] = np.sum(var_in[bin_mask])
 
+        # Error propagate to into transit-depth uncertainty
         bin_err = np.sqrt(
-            (1.0/dt_in/bin_out)**2.0 * bin_vin +
-            (bin_in/dt_out/bin_out**2.0)**2.0 * bin_vout
+            (1.0/t_in/bin_out)**2.0 * bin_vin +
+            (bin_in/t_out/bin_out**2.0)**2.0 * bin_vout
         )
+
         # The numpy random system must have its seed reinitialized in
         # each sub-processes to avoid identical 'random' steps.
         # random.randomint is process- and thread-safe.
@@ -388,7 +602,6 @@ def waltzer_snr(
         - 'st_mass'  Host's mass (M_sun)
         - 'ra'       Right ascention (degrees)
         - 'dec'      Declination (degrees)
-        - 'sy_dist'  Distant to target (parsec)
         - 'sy_vmag'  Host's V magnitude
     output_csv: String
         Output filename where to save the resuls (as CSV)
@@ -398,7 +611,6 @@ def waltzer_snr(
         - m_star               Host's mass (R_sun)
         - ra                   Right ascention (degrees)
         - dec                  Declination (degrees)
-        - distance             Distant to target (parsec)
         - V_mag                Host's V magnitude
         - NUV_mean_flux        Mean flux in NUV band (erg s-1 cm-2 A-1)
         - NUV_max_flux         Maximum flux in NUV band (erg s-1 cm-2 A-1)
@@ -419,7 +631,7 @@ def waltzer_snr(
     Notes
     -----
     Can also be run from the command line, e.g.:
-    python snr_waltzer.py target_list_20250327.csv waltzer_snr.csv
+    waltz target_list_20250327.csv waltzer_snr.csv
 
     Example (TBD while we build this machine)
     -------
@@ -433,53 +645,13 @@ def waltzer_snr(
     >>> t_dur = 2.5
     >>> n_obs = 10
     """
-    # Effective area calculations
-    primary_area = np.pi * (0.5*diameter)**2.0
-    Rprim    = 0.90  # Telescope primary reflectance in %
-    Rsec     = 0.90  # Telescope secondary reflectance in %
-    Sec_obstr= 0.85  # Telescope secondary obstruction in % (1-Obstruction)
-    R_d1     = 0.80  # Dichroic 1 Reflectance/Transmission in %
-    R_d2     = 0.80  # Dichroic 2 Reflectance/Transmission in %
-
-    R_uvfold = 1.00  # UV fold reflectance in %
-    R_uvgr   = 0.90  # UV grating reflectance in %
-    Uv_geff  = 0.65  # UV grating effeciency in %
-    Uv_detQE = 0.55  # UV detector QE in %
-
-    R_opfold = 0.90  # Optical fold reflectance in %
-    R_opgr   = 0.90  # Optical grating reflectance in %
-    Op_geff  = 0.75  # Optical grating effeciency in %
-    Op_detQE = 0.90  # Optical detector QE in %
-
-    BB_lens  = 0.90  # IR Broad band lens transmission in % IN REALITY, A FOLD
-    BB_detQE = 0.85  # IR Broad band detector QE in %
-
-    # Effective collecing areas in cm^2
-    NUV_EFF_AREA = (
-        primary_area * Rprim * Rsec * Sec_obstr *
-        R_d1 * R_uvfold * R_uvgr * Uv_geff * Uv_detQE
-    )
-    VIS_EFF_AREA = (
-        primary_area * Rprim * Rsec * Sec_obstr *
-        R_d1 * R_d2 * R_opfold * R_opgr * Op_geff * Op_detQE
-    )
-    NIR_EFF_AREA = (
-        primary_area * Rprim * Rsec * Sec_obstr *
-        R_d1 * R_d2 * BB_lens * BB_detQE
-    )
+    # The three amigos
+    nuv_det = Detector('nuv', diameter)
+    vis_det = Detector('vis', diameter)
+    nir_det = Detector('nir', diameter)
 
     # WALTzER resolution (FWHM) and wavelength grid (angstrom)
-    inst_resolution = 3_000.0
-    bin_edges = ps.constant_resolution_spectrum(
-        2_500, 20_000, resolution=2.0*inst_resolution,
-    )
-
-    detector_cfg = f'{ROOT}/data/detectors/waltzer_nuv.cfg'
-    nuv_det = Detector(detector_cfg, bin_edges, NUV_EFF_AREA)
-    detector_cfg = f'{ROOT}/data/detectors/waltzer_vis.cfg'
-    vis_det = Detector(detector_cfg, bin_edges, VIS_EFF_AREA)
-    detector_cfg = f'{ROOT}/data/detectors/waltzer_nir.cfg'
-    nir_det = Detector(detector_cfg, bin_edges, NIR_EFF_AREA)
+    inst_resolution = vis_det.resolution
 
     # Higher resolution for models (will be bin down to WALTzER)
     resolution = 60_000.0
@@ -497,7 +669,6 @@ def waltzer_snr(
     stellar_masses = data['st_mass']
     ra = data['ra']
     dec = data['dec']
-    distances = data['sy_dist']
     v_mags = data['sy_vmag']
 
     # Total in-transit exposure time (s) [for .csv statistics]
@@ -509,7 +680,6 @@ def waltzer_snr(
         exp_time = (t_dur * 3600) * efficiency
         exp_time = np.tile(exp_time, ntargets)
 
-        print('Target Name  V_mag  Teff  SNR_NUV SNR_VIS SNR_NIR (ppm)')
     # Read models files
     cache_seds = {}
     output_data = []
@@ -535,25 +705,27 @@ def waltzer_snr(
         # Normalize according to Vmag
         flux = sed.normalize_vega(wl, sed_flux, v_mags[i])
 
+        # Flux stats
         nuv_flux_stats = nuv_det.flux_stats(wl, flux)
         vis_flux_stats = vis_det.flux_stats(wl, flux)
         nir_flux_stats = nir_det.flux_stats(wl, flux)
 
-        # Fluxes in photons per second
-        nuv_flux, nuv_background = nuv_det.photon_spectrum(wl, flux)
-        vis_flux, vis_background = vis_det.photon_spectrum(wl, flux)
-        nir_flux, nir_background = nir_det.photon_spectrum(wl, flux)
-
-        # snr_stats(flux, exp_time, n_obs, bkg_flux=None)
-        nuv_snr_stats = nuv_det.snr_stats(nuv_flux, exp_time[i], n_obs)
-        vis_snr_stats = vis_det.snr_stats(vis_flux, exp_time[i], n_obs)
-        nir_snr_stats = nir_det.snr_stats(nir_flux, exp_time[i], n_obs)[1:]
+        # SNR stats
+        integ_time = exp_time[i] * n_obs
+        nuv_snr_stats = nuv_det.snr_stats(wl, flux, integ_time)
+        vis_snr_stats = vis_det.snr_stats(wl, flux, integ_time)
+        nir_snr_stats = nir_det.snr_stats(wl, flux, integ_time)[1:]
         print(
             f'{i+1:2d}/{ntargets}: {repr(target):15} '
             f'{v_mags[i]:4.2f}  {teff_match:5.0f}  '
             f'{nuv_snr_stats[-1]:8.1f}  {vis_snr_stats[-1]:6.1f}  '
             f'{nir_snr_stats[-1]:6.1f}'
         )
+
+        # Source flux and variance in e- per second:
+        e_flux_nuv, var_nuv = nuv_det.calc_total_noise(wl, flux)
+        e_flux_vis, var_vis = vis_det.calc_total_noise(wl, flux)
+        e_flux_nir, var_nir = nir_det.calc_total_noise(wl, flux)
 
         wl_half_widths = (
             nuv_det.half_widths,
@@ -562,7 +734,8 @@ def waltzer_snr(
         )
         spectra[target] = {
             'wl': (nuv_det.wl, vis_det.wl, nir_det.wl),
-            'e_flux': (nuv_flux, vis_flux, nir_flux),
+            'e_flux': (e_flux_nuv, e_flux_vis, e_flux_nir),
+            'var': (var_nuv, var_vis, var_nir),
             'wl_half_width': wl_half_widths,
             'transit_dur': transit_dur[i],
         }
@@ -575,7 +748,6 @@ def waltzer_snr(
             stellar_masses[i],
             ra[i],
             dec[i],
-            distances[i],
             v_mags[i],
             transit_dur[i],
             *nuv_flux_stats,
@@ -588,7 +760,7 @@ def waltzer_snr(
 
     # Save result as CSV file
     header = (
-        "target, teff, r_star, m_star, ra, dec, distance, V_mag, transit_dur,"
+        "target, teff, r_star, m_star, ra, dec, V_mag, transit_dur,"
         "NUV_mean_flux, NUV_max_flux,"
         "NUV_mean_snr, NUV_max_snr, NUV_transit_uncert, "
         "VIS_mean_flux, VIS_max_flux, "
@@ -597,7 +769,7 @@ def waltzer_snr(
     ).split(',')
     header = [h.strip() for h in header]
     units = (
-        "#name, K, R_sun, M_sun, deg, deg, parsec, , h,"
+        "#name, K, R_sun, M_sun, deg, deg, , h,"
         "erg s-1 cm-2 A-1, erg s-1 cm-2 A-1, , , ppm,"
         "erg s-1 cm-2 A-1, erg s-1 cm-2 A-1, , , ppm,"
         "erg s-1 cm-2 A-1, erg s-1 cm-2 A-1, , ppm"
