@@ -1,8 +1,10 @@
-# Copyright (c) 2025 Sreejith and Patricio
-# LICENSE TBD
+# Copyright (c) 2025 Patricio Cubillos and A. G. Sreejith
+# WALTzER is open-source software under the GPL-2.0 license (see LICENSE)
 
 import sys
+import os
 import argparse
+from shiny import run_app
 from .snr_waltzer import waltzer_snr
 
 
@@ -21,17 +23,35 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="WALTzER SNR and ETC."
     )
-         
+
     # Required positional arguments
     parser.add_argument(
         "input_file",
         type=is_csv_file,
+        default=None,
+        nargs="?",
         help="Input CSV file with target list.",
     )
     parser.add_argument(
         "output_file",
         type=is_csv_file,
+        default=None,
+        nargs="?",
         help="Output CSV file with SNR statistics.",
+    )
+
+    # GUI
+    parser.add_argument(
+        "-tso", "--tso",
+        action='store_true',
+        default=False,
+        help="Launch WALTzER TSO GUI",
+    )
+    parser.add_argument(
+        "--debug",
+        type=bool,
+        default=False,
+        help="Run GUI in debug mode",
     )
 
     # Optional arguments
@@ -74,6 +94,14 @@ def main():
     waltz target_list_20250327.csv  waltzer_snr_test.csv
     """
     args = parse_args()
+
+    if args.tso:
+        # HACK: TBD change to reload = args.debug
+        reload = '--debug'
+        app = os.path.realpath(os.path.dirname(__file__)) + '/gui_waltzer.py'
+        run_app(app, reload=reload, launch_browser=True, port=8001, dev_mode=True)
+        return
+
     waltzer_snr(
          csv_file=args.input_file,
          output_csv=args.output_file,
