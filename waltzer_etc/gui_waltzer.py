@@ -11,7 +11,6 @@ import operator
 import faicons as fa
 import numpy as np
 import pandas as pd
-import pandeia.engine
 import plotly.graph_objects as go
 from shiny import ui, render, reactive, req, App
 from shinywidgets import output_widget, render_plotly
@@ -19,28 +18,22 @@ from shinywidgets import output_widget, render_plotly
 import pyratbay.constants as pc
 import pyratbay.spectrum as ps
 
-import gen_tso
 from gen_tso import catalogs as cat
 from gen_tso import pandeia_io as jwst
 from gen_tso import plotly_io as plots
 from gen_tso import custom_shiny as cs
 from gen_tso.utils import (
     ROOT,
-    get_latest_pandeia_release,
-    get_version_advice,
-    get_pandeia_advice,
     read_spectrum_file,
     pretty_print_target,
 )
 import gen_tso.catalogs.utils as u
 from gen_tso.pandeia_io.pandeia_defaults import (
-    #make_obs_label,
     make_save_label,
 )
-from gen_tso.pandeia_io.pandeia_setup import (
-    check_pandeia_ref_data,
-    check_pysynphot,
-    update_synphot_files,
+from gen_tso.export_script import (
+    export_script_fixed_values,
+    export_script_calculated_values,
 )
 
 from waltzer_etc.utils import ROOT as W_ROOT
@@ -52,7 +45,6 @@ from app_utils import (
     get_throughput,
     get_auto_sed,
     planet_model_name,
-    #draw,
     read_depth_spectrum,
     make_tso_label,
     parse_obs,
@@ -68,14 +60,7 @@ from viewer_popovers import (
     tso_choices,
 )
 
-# waltzer_etc.io
 import plotly_interface as plt
-
-
-from gen_tso.export_script import (
-    export_script_fixed_values,
-    export_script_calculated_values,
-)
 
 bins = np.arange(6000, 0, -1)
 resolutions = 6000.0 / bins
@@ -359,18 +344,8 @@ app_ui = ui.page_fluid(
     ui.layout_columns(
         ui.span(
             ui.HTML(
-                "<b>WALTzER's</b> Exoplanet time-series observations ETC ("
+                "<b>WALTzER's</b> Exoplanet time-series observations ETC  "
             ),
-            ui.tooltip(
-                ui.tags.a(
-                    fa.icon_svg("book", fill='black'),
-                    href='https://pcubillos.github.io/gen_tso',
-                    target="_blank",
-                ),
-                "documentation",
-                placement='bottom',
-            ),
-            ',',
             ui.tooltip(
                 ui.input_action_link(
                     id='main_settings',
@@ -380,7 +355,6 @@ app_ui = ui.page_fluid(
                 "settings",
                 placement='bottom',
             ),
-            ')',
             style="font-size: 26px;",
         ),
         col_widths=(12),
@@ -1182,7 +1156,6 @@ def server(input, output, session):
     esasky_command = reactive.Value(None)
     programs_info = reactive.Value(None)
     clipboard = reactive.Value('')
-    latest_pandeia = reactive.Value(None)
 
     #@reactive.effect
     #@reactive.event(input.delete_button)
@@ -1213,90 +1186,53 @@ def server(input, output, session):
             last_trexo = f.readline().replace('_','-')
         with open(f'{ROOT}/data/last_updated_nea.txt', 'r') as f:
             last_nasa = f.readline().replace('_','-')
-        button_width = '95%'
 
-        if latest_pandeia.get() is None:
-            latest_pandeia.set(get_latest_pandeia_release())
-
-        gen_tso_status = get_version_advice(gen_tso)
-        pandeia_status = get_pandeia_advice(
-            pandeia.engine, latest_pandeia.get(),
-        )
-        pandeia_ref_status = check_pandeia_ref_data(latest_pandeia.get())
-        pysynphot_data = check_pysynphot()
+        waltz_ver = waltz.__version__
+        github_url = "https://github.com/pcubillos/waltzer_etc"
 
         m = ui.modal(
-            ui.markdown(
-                'If you see anything in <span style="color:red">red</span>, '
-                'click the button to update or follow the instructions.<br>'
-                'If you see <span style="color:#ffa500">orange</span>, '
-                "you are encouraged to upgrade, but no stress.<br>"
-                'If you see <span style="color:#0B980D">green</span>, you '
-                'are good to go modeling JWST observations.'
-            ),
+            #ui.markdown(
+            #    'If you see anything in <span style="color:red">red</span>, '
+            #    'click the button to update or follow the instructions.<br>'
+            #    'If you see <span style="color:#ffa500">orange</span>, '
+            #    "you are encouraged to upgrade, but no stress.<br>"
+            #    'If you see <span style="color:#0B980D">green</span>, you '
+            #    'are good to go modeling JWST observations.'
+            #),
             ui.hr(),
-            gen_tso_status,
             ui.layout_columns(
+                ui.markdown(f"This is the WALTzER ETC, version **{waltz_ver}**"),
+                ui.span(
+                    ui.tags.a(
+                        fa.icon_svg("github", fill='black'),
+                        href=github_url,
+                        target="_blank",
+                    ),
+                    ui.HTML(' Github repository is located here: '),
+                    ui.tags.a(github_url, href=github_url, target="_blank"),
+                ),
                 # Trexolists
-                ui.input_task_button(
-                    id='update_trexo',
-                    label='Update JWST database',
-                    label_busy="Fetching data from trexolists ...",
-                    width=button_width,
-                    class_="btn btn-sm",
-                ),
-                ui.HTML(f'Last updated: {last_trexo}'),
+                ui.HTML(f'JWST database last updated: {last_trexo}'),
                 # NASA Archive
-                ui.input_task_button(
-                    id='update_nasa',
-                    label='Update Exoplanet database',
-                    label_busy="Fetching data from NASA Archive ...",
-                    width=button_width,
-                    class_="btn btn-sm",
-                ),
-                ui.HTML(f"Last updated: {last_nasa}"),
-                # pysynphot
-                ui.input_task_button(
-                    id='update_pysynphot',
-                    label='Update Pysynphot',
-                    label_busy="Fetching pysynphot data from STScI ...",
-                    width=button_width,
-                    class_="btn btn-sm",
-                ),
-                pysynphot_data,
-                col_widths=(4,8),
+                ui.HTML(f"NASA exoplanets database last updated: {last_nasa}"),
+                # SEDs
+                #ui.input_task_button(
+                #    id='update_pysynphot',
+                #    label='Update Pysynphot',
+                #    label_busy="Fetching pysynphot data from STScI ...",
+                #    width=button_width,
+                #    class_="btn btn-sm",
+                #),
+                col_widths=(12),
                 gap='10px',
                 class_="px-0 py-0 mx-0 my-0",
             ),
-            pandeia_status,
-            pandeia_ref_status,
             ui.hr(),
-            title=ui.markdown("**Settings**"),
+            title=ui.markdown("**WALTzER specs**"),
             easy_close=True,
             size='l',
         )
         ui.modal_show(m)
-
-    @reactive.Effect
-    @reactive.event(input.update_trexo)
-    def _():
-        cat.fetch_trexolist()
-        catalog, is_jwst, is_transit, is_confirmed = load_catalog()
-
-    @reactive.Effect
-    @reactive.event(input.update_nasa)
-    def _():
-        cat.update_exoplanet_archive()
-        catalog, is_jwst, is_transit, is_confirmed = load_catalog()
-        update_catalog_flag.set(~update_catalog_flag.get())
-
-    @reactive.Effect
-    @reactive.event(input.update_pysynphot)
-    def _():
-        status = update_synphot_files()
-        for warning in status:
-            error_msg = ui.markdown(f"**Error:**<br>{warning}")
-            ui.notification_show(error_msg, type="error", duration=8)
 
 
     @reactive.effect
