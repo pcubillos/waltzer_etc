@@ -18,25 +18,7 @@ from shinywidgets import output_widget, render_plotly
 import pyratbay.constants as pc
 import pyratbay.spectrum as ps
 
-from gen_tso import catalogs as cat
-from gen_tso import pandeia_io as jwst
-from gen_tso import plotly_io as plots
-from gen_tso import custom_shiny as cs
-from gen_tso.utils import (
-    ROOT,
-    read_spectrum_file,
-    pretty_print_target,
-)
-import gen_tso.catalogs.utils as u
-from gen_tso.pandeia_io.pandeia_defaults import (
-    make_save_label,
-)
-from gen_tso.export_script import (
-    export_script_fixed_values,
-    export_script_calculated_values,
-)
-
-from waltzer_etc.utils import ROOT as W_ROOT
+from waltzer_etc.utils import ROOT as ROOT
 from waltzer_etc.utils import inst_convolution
 import waltzer_etc as waltz
 import waltzer_etc.sed as sed
@@ -50,6 +32,14 @@ from app_utils import (
     parse_obs,
     parse_sed,
     _safe_num,
+    read_spectrum_file,
+    pretty_print_target,
+    as_str,
+    esasky_js_circle,
+    esasky_js_catalog,
+    custom_card,
+    Catalog,
+    fetch_gaia_targets,
 )
 # TBD proper import local file
 from viewer_popovers import (
@@ -139,7 +129,7 @@ def masked_throughput(masks):
 
 
 def load_catalog():
-    catalog = cat.Catalog()
+    catalog = Catalog()
     is_jwst = np.array([target.is_jwst_planet for target in catalog.targets])
     is_transit = np.array([target.is_transiting for target in catalog.targets])
     is_confirmed = np.array([target.is_confirmed for target in catalog.targets])
@@ -161,7 +151,7 @@ for sed_type in sed.get_sed_types():
 
 
 # Higher resolution for models (will be bin down to WALTzER)
-resolution = 12_000.0
+resolution = 45_000.0
 wl = ps.constant_resolution_spectrum(2_400, 20_000, resolution=resolution)
 wl_micron = wl * pc.A/pc.um
 # WALTzER's resolution
@@ -264,7 +254,7 @@ nasa_url = 'https://exoplanetarchive.ipac.caltech.edu/overview'
 stsci_url = 'https://www.stsci.edu/jwst/science-execution/program-information?id=PID'
 cdnjs = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/'
 
-# Depth and SED units, ensure they are consistent with u.read_spectrum_file()
+# Depth and SED units, ensure they are consistent with read_spectrum_file()
 wl_units = [
     "angstrom",
     "micron",
@@ -365,7 +355,7 @@ app_ui = ui.page_fluid(
     ui.layout_columns(
         # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
         # The target
-        cs.custom_card(
+        custom_card(
             ui.card_header("Target", class_="bg-primary"),
             ui.panel_well(
                 # a hidden section to hold switches for other conditionals
@@ -709,7 +699,7 @@ app_ui = ui.page_fluid(
 
         # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
         # The instrument setup
-        cs.custom_card(
+        custom_card(
             ui.card_header(
                 'Instrument',
                 class_="bg-primary",
@@ -902,13 +892,6 @@ app_ui = ui.page_fluid(
                             value=250.0,
                             min=0.0, max=3000.0, step=25.0,
                         ),
-                        "Depth units:",
-                        ui.input_select(
-                            id="tso_depth_units",
-                            label="",
-                            choices = depth_units,
-                            selected='percent',
-                        ),
                         width=1/2,
                         fixed_width=False,
                         gap='5px',
@@ -1000,7 +983,7 @@ app_ui = ui.page_fluid(
         # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
         # Results
         ui.layout_columns(
-            cs.custom_card(
+            custom_card(
                 ui.card_header("WALTzER runs"),
                 # current setup and TSO runs
                 ui.layout_columns(
@@ -1060,7 +1043,7 @@ app_ui = ui.page_fluid(
             ui.navset_card_tab(
                 ui.nav_panel(
                     "Stellar SED",
-                    cs.custom_card(
+                    custom_card(
                         output_widget("plotly_sed", fillable=True),
                         body_args=dict(padding='0px'),
                         full_screen=True,
@@ -1069,7 +1052,7 @@ app_ui = ui.page_fluid(
                 ),
                 ui.nav_panel(
                     ui.output_text('transit_depth_label'),
-                    cs.custom_card(
+                    custom_card(
                         output_widget("plotly_depth", fillable=True),
                         body_args=dict(padding='0px'),
                         full_screen=True,
@@ -1079,7 +1062,7 @@ app_ui = ui.page_fluid(
                 ),
                 ui.nav_panel(
                     "Sky view",
-                    cs.custom_card(
+                    custom_card(
                         ui.HTML(
                             '<iframe id="esasky" '
                             'height="100%" '
@@ -1096,7 +1079,7 @@ app_ui = ui.page_fluid(
                 ),
                 ui.nav_panel(
                     "Noise",
-                    cs.custom_card(
+                    custom_card(
                         output_widget("plotly_variance", fillable=True),
                         body_args=dict(padding='0px'),
                         full_screen=True,
@@ -1106,7 +1089,7 @@ app_ui = ui.page_fluid(
                 ui.nav_panel(
                     "TSO",
                     #tso_popover,
-                    cs.custom_card(
+                    custom_card(
                         output_widget("plotly_tso", fillable=True),
                         body_args=dict(padding='0px'),
                         full_screen=True,
@@ -1135,7 +1118,7 @@ app_ui = ui.page_fluid(
         col_widths=[3, 3, 6],
     ),
     title='WALTzER TSO',
-    theme=f'{W_ROOT}/data/base_theme.css',
+    theme=f'{ROOT}/data/base_theme.css',
 )
 
 
@@ -1342,64 +1325,6 @@ def server(input, output, session):
         #    ui.update_numeric('tso_depth_min', value=min_depth, step=step)
         #    ui.update_numeric('tso_depth_max', value=max_depth, step=step)
 
-
-    @reactive.effect
-    @reactive.event(input.export_button)
-    def export_to_notebook():
-        # For fixed values
-        script = export_script_fixed_values(
-            input, spectra,
-            acquisition_targets, acq_target_list,
-        )
-        fixed_script = ui.HTML(
-            f'<pre><code class="language-python">{script}</code></pre>'
-            "<script>hljs.highlightAll();</script>"
-        )
-        # For calculated values
-        script = export_script_calculated_values(
-            input, spectra,
-            acquisition_targets, acq_target_list, catalog,
-        )
-        calculated_script = ui.HTML(
-            f'<pre><code class="language-python">{script}</code></pre>'
-            "<script>hljs.highlightAll();</script>"
-        )
-
-        clipboard.set(script)
-        m = ui.modal(
-            ui.markdown("**TSO script/notebook**"),
-            ui.div(
-                ui.input_action_button(
-                    id='copy_script',
-                    label='Copy to clipboard',
-                    class_='btn btn-primary',
-                ),
-                class_='d-flex justify-content-end mb-2'
-            ),
-            ui.navset_card_tab(
-                ui.nav_panel(
-                    "Fixed values",
-                    fixed_script,
-                ),
-                ui.nav_panel(
-                    "Calculated values",
-                    calculated_script,
-                ),
-                id="selected_navset_card_tab",
-            ),
-            easy_close=True,
-            size='l',
-        )
-        ui.modal_show(m)
-
-    @reactive.effect
-    @reactive.event(input.copy_script)
-    async def copy_clipboard_script():
-        print(input.selected_navset_card_tab.get())
-        await session.send_custom_message(
-            "copy_to_clipboard",
-            clipboard.get(),
-        )
 
     # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
     # Instrument
@@ -1870,10 +1795,10 @@ def server(input, output, session):
             t_dur = cache_target[target.planet]['t_dur']
             magnitude = cache_target[target.planet]['norm_mag']
         else:
-            t_eff = u.as_str(target.teff, '.1f', '')
-            log_g = u.as_str(target.logg_star, '.2f', '')
-            t_dur = u.as_str(target.transit_dur, '.3f', '')
-            magnitude = f'{target.ks_mag:.3f}'
+            t_eff = as_str(target.teff, '.1f', '')
+            log_g = as_str(target.logg_star, '.2f', '')
+            t_dur = as_str(target.transit_dur, '.3f', '')
+            magnitude = f'{target.v_mag:.3f}'
 
         ui.update_numeric('t_eff', value=float(t_eff))
         ui.update_numeric('log_g', value=float(log_g))
@@ -1972,10 +1897,8 @@ def server(input, output, session):
         is_bookmarked = not bookmarked_sed.get()
         bookmarked_sed.set(is_bookmarked)
         if is_bookmarked:
-            print(sed_type, sed_model, norm_mag)
             sed_flux = load_sed(sed_model, cache_seds)
             # Normalize according to Vmag
-            #scene = jwst.make_scene(sed_type, sed_model, norm_band, norm_mag)
             flux = sed.normalize_vega(wl, sed_flux, norm_mag)
 
             spectra['sed'][sed_label] = {
@@ -2299,7 +2222,7 @@ def server(input, output, session):
 
         resolution = input.plot_sed_resolution.get()
 
-        fig = plots.plotly_sed_spectra(
+        fig = plt.plotly_sed_spectra(
             sed_models, model_names, current_model,
             units=units,
             wl_range=wl_range, wl_scale=wl_scale,
@@ -2310,12 +2233,6 @@ def server(input, output, session):
         return fig
 
 
-    #@reactive.event(
-    #    input.bookmark_depth, update_depth_flag, input.clear_depth_bookmarks,
-    #    input.plot_depth_xscale, input.depth_wl_min, input.depth_wl_max,
-    #    input.plot_depth_units, input.depth_resolution, input.obs_geometry,
-    #    input.filter,
-    #)
     @render_plotly
     def plotly_depth():
         input.bookmark_depth.get()  # (make panel reactive to bookmark_depth)
@@ -2339,7 +2256,7 @@ def server(input, output, session):
         resolution = input.depth_resolution.get()
 
         depth_models = [spectra[obs_geometry][model] for model in model_names]
-        fig = plots.plotly_depth_spectra(
+        fig = plt.plotly_depth_spectra(
             depth_models, model_names, current_model,
             units=units,
             wl_range=wl_range, wl_scale=wl_scale,
@@ -2367,7 +2284,6 @@ def server(input, output, session):
         else:
             idx = searchsorted_closest(resolutions, resolution)
             binsize = bins[idx]
-            #print(resolutions[idx], binsize)
 
         if plot_type == 'variance':
             fig = plt.plotly_variances(
@@ -2450,7 +2366,7 @@ def server(input, output, session):
         wl_range = [wl_min, wl_max]
 
         if plot_type == 'tso':
-            depth_units = input.tso_depth_units.get()
+            depth_units = 'percent'
             depth_range = [input.tso_depth_min.get(), input.tso_depth_max.get()]
             fig = plt.plotly_tso_spectra(
                 tso, tso_data, depth_model,
@@ -2477,23 +2393,6 @@ def server(input, output, session):
         #        obs_geometry=obs_geometry,
         #    )
         return fig
-
-    @reactive.effect
-    @reactive.event(input.tso_depth_units)
-    def rescale_tso_depths():
-        tso_key = input.display_tso_run.get()
-        if tso_key is None:
-            return
-        key, tso_label = tso_key.split('_', maxsplit=1)
-        tso = tso_runs[key][tso_label]
-        resolution = _safe_num(input.tso_resolution.get(), default=250, cast=int)
-        units = input.tso_depth_units.get()
-
-        min_depth, max_depth, step = jwst._get_tso_depth_range(
-            tso, resolution, units,
-        )
-        ui.update_numeric('tso_depth_min', value=min_depth, step=step)
-        ui.update_numeric('tso_depth_max', value=max_depth, step=step)
 
 
     # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
@@ -2576,7 +2475,7 @@ def server(input, output, session):
         if target is None:
             return
 
-        query = cat.fetch_gaia_targets(
+        query = fetch_gaia_targets(
             target.ra, target.dec, max_separation=80.0, raise_errors=False,
         )
         if isinstance(query, str):
@@ -2593,8 +2492,8 @@ def server(input, output, session):
         success = "Nearby targets found!  Open the '*FOV targets*' tab"
         ui.notification_show(ui.markdown(success), type="message", duration=5)
 
-        circle = u.esasky_js_circle(target.ra, target.dec, radius=80.0)
-        ta_catalog = u.esasky_js_catalog(query)
+        circle = esasky_js_circle(target.ra, target.dec, radius=80.0)
+        ta_catalog = esasky_js_catalog(query)
         esasky_command.set([ta_catalog, circle])
 
 

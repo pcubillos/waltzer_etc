@@ -1,6 +1,7 @@
 # Copyright (c) 2025 Patricio Cubillos and A. G. Sreejith
 # WALTzER is open-source software under the GPL-2.0 license (see LICENSE)
 
+from itertools import groupby
 import numpy as np
 import pyratbay.spectrum as ps
 from pyratbay.tools import u
@@ -9,6 +10,7 @@ import plotly.express as px
 
 __all__ = [
     'bin_spectrum',
+    'plotly_sed_spectra',
     'plotly_variances',
     'plotly_flux_snr',
     'plotly_depth_snr',
@@ -84,6 +86,264 @@ def bin_spectrum(wl, var_list, resolution=None, binsize=1):
             bin_spectrum[j,i] = np.sum(var_list[j][bin_mask])
 
     return bin_wl, bin_spectrum
+
+
+def response_boundaries(wl, response, threshold=0.001):
+    """
+    Find the wavelength boundaries where a response function
+    is greater than the required threshold.
+
+    Parameters
+    ----------
+    wl: 1D float iterable
+        Wavelength array where a response function is sampled
+    response: 1D float iterable
+        Response function.
+    threshold: float
+        Minimum response value for flagging.
+
+    Returns
+    -------
+    bounds: list of float pairs
+        A list of the wavelength boundaries for each contiguous
+        segment with non-zero response.
+
+    Examples
+    --------
+    >>> import gen_tso.plotly_io as plots
+    >>>
+    >>> nwave = 21
+    >>> wl = np.linspace(0.0, 1.0, nwave)
+    >>> response = np.zeros(nwave)
+    >>> response[2:6] = response[10:12] = 1.0
+    >>> bounds = plots.response_boundaries(wl, response, threshold=0.5)
+    >>> print(bounds)
+    [(0.1, 0.25), (0.5, 0.55)]
+    """
+    bounds = []
+    # Contiguous ranges where response > threshold:
+    for group, indices in groupby(range(len(wl)), lambda x: response[x]>threshold):
+        if group:
+            indices = list(indices)
+            imin = indices[0]
+            imax = indices[-1]
+            bounds.append((wl[imin], wl[imax]))
+    return bounds
+
+
+def plotly_sed_spectra(
+        sed_models, labels, highlight_model=None,
+        wl_range=None, units='mJy', wl_scale='linear', resolution=250.0,
+        flux_scale='linear',
+        throughput=None,
+    ):
+    """
+    Make a plotly figure of stellar SED spectra.
+    """
+    nmodels = len(sed_models)
+    fig = go.Figure(
+        layout={'colorway': COLOR_SEQUENCE},
+    )
+
+    # Shaded area for filter:
+    if throughput is not None:
+        if 'order2' in throughput:
+            wl = throughput['order2']['wl']
+            response = throughput['order2']['response']
+            band_bounds = response_boundaries(wl, response, threshold=0.03)
+            for bound in band_bounds:
+                fig.add_vrect(
+                    fillcolor="orchid", opacity=0.4,
+                    x0=bound[0], x1=bound[1],
+                    layer="below", line_width=0,
+                )
+        band_bounds = response_boundaries(throughput['wl'], throughput['response'])
+        for bound in band_bounds:
+            fig.add_vrect(
+                fillcolor="#069af3", opacity=0.4,
+                x0=bound[0], x1=bound[1],
+                layer="below", line_width=0,
+            )
+
+    for j,model in enumerate(sed_models):
+        wl = model['wl']
+        flux = model['flux']
+        if resolution > 0:
+            wl_min = np.amin(wl)
+            wl_max = np.amax(wl)
+            bin_wl = ps.constant_resolution_spectrum(wl_min, wl_max, resolution)
+            bin_flux = ps.bin_spectrum(bin_wl, wl, flux, gaps='interpolate')
+            mask = np.isfinite(bin_flux)
+            wl = bin_wl[mask]
+            flux = bin_flux[mask]
+
+        if highlight_model is None:
+            linedict = dict(width=1.25)
+            rank = j
+        elif labels[j] == highlight_model:
+            linedict = dict(color='Gold', width=2.0)
+            rank = j + nmodels
+        else:
+            linedict = dict(width=1.25)
+            rank = j
+        fig.add_trace(go.Scatter(
+            x=wl,
+            y=flux,
+            mode='lines',
+            opacity=0.75,
+            name=labels[j],
+            line=linedict,
+            legendrank=rank,
+        ))
+
+    fig.update_traces(
+        hovertemplate=
+            'wl = %{x:.2f}<br>'+
+            'flux = %{y:.3f}'
+    )
+    fig.update_yaxes(
+        title_text=f'Flux ({units})',
+        title_standoff=0,
+        type=flux_scale,
+    )
+
+    if wl_scale == 'log':
+        wl_range = [
+            None if wave is None else np.log10(wave)
+            for wave in wl_range
+        ]
+    fig.update_xaxes(
+        title_text='wavelength (um)',
+        title_standoff=0,
+        range=wl_range,
+        type=wl_scale,
+    )
+
+    fig.update_layout(legend=dict(
+        orientation="h",
+        entrywidth=1.0,
+        entrywidthmode='fraction',
+        yanchor="bottom",
+        xanchor="right",
+        y=1.02,
+        x=1
+    ))
+    fig.update_layout(showlegend=True)
+    return fig
+
+
+
+def plotly_depth_spectra(
+        depth_models, labels, highlight_model=None,
+        wl_range=None, units='percent', wl_scale='linear', resolution=250.0,
+        depth_range=None,
+        obs_geometry='transit',
+        throughput=None,
+    ):
+    """
+    Make a plotly figure of transit/eclipse depth spectra.
+    """
+    if depth_range is None:
+        depth_range =[None, None]
+
+    nmodels = len(depth_models)
+    fig = go.Figure(
+        layout={'colorway':COLOR_SEQUENCE},
+    )
+    # Shaded area for filter:
+    if throughput is not None:
+        if 'order2' in throughput:
+            wl = throughput['order2']['wl']
+            response = throughput['order2']['response']
+            band_bounds = response_boundaries(wl, response, threshold=0.03)
+            for bound in band_bounds:
+                fig.add_vrect(
+                    fillcolor="orchid", opacity=0.4,
+                    x0=bound[0], x1=bound[1],
+                    layer="below", line_width=0,
+                )
+        bounds = response_boundaries(throughput['wl'], throughput['response'])
+        for bound in bounds:
+            fig.add_vrect(
+                fillcolor="#069af3", opacity=0.4,
+                x0=bound[0], x1=bound[1],
+                layer="below", line_width=0,
+            )
+
+    ymax = 0.0
+    ymin = np.inf
+    for j,model in enumerate(depth_models):
+        wl = model['wl']
+        depth = model['depth']
+        if resolution > 0:
+            wl_min = np.amin(wl)
+            wl_max = np.amax(wl)
+            bin_wl = ps.constant_resolution_spectrum(wl_min, wl_max, resolution)
+            depth = ps.bin_spectrum(bin_wl, wl, depth, gaps='interpolate')/u(units)
+            mask = np.isfinite(depth)
+            wl = bin_wl[mask]
+            depth = depth[mask]
+
+        if labels[j] == highlight_model:
+            linedict = dict(color='Gold', width=2.0)
+            rank = j + nmodels
+        else:
+            linedict = dict(width=1.25)
+            rank = j
+        fig.add_trace(go.Scatter(
+            x=wl,
+            y=depth,
+            mode='lines',
+            name=labels[j],
+            line=linedict,
+            legendrank=rank,
+        ))
+        ymax = np.amax([ymax, np.amax(depth)])
+        ymin = np.amin([ymin, np.amin(depth)])
+
+    fig.update_traces(
+        hovertemplate=
+            'wl = %{x:.2f}<br>'+
+            'depth = %{y:.3f}'
+    )
+    if depth_range[0] is None or depth_range[1] is None:
+        dy = 0.05 * (ymax-ymin)
+    if depth_range[0] is None:
+        depth_range[0] = ymin - dy
+    if depth_range[1] is None:
+        depth_range[1] = ymax + dy
+
+
+    ylabel = f'{obs_geometry} depth{depth_units_label[units]}'
+    fig.update_yaxes(
+        title_text=ylabel,
+        title_standoff=0,
+        range=depth_range,
+    )
+
+    if wl_scale == 'log' and wl_range is not None:
+        wl_range = [
+            None if wave is None else np.log10(wave)
+            for wave in wl_range
+        ]
+    fig.update_xaxes(
+        title_text='wavelength (um)',
+        title_standoff=0,
+        range=wl_range,
+        type=wl_scale,
+    )
+
+    fig.update_layout(legend=dict(
+        orientation="h",
+        entrywidth=1.0,
+        entrywidthmode='fraction',
+        yanchor="bottom",
+        xanchor="right",
+        y=1.02,
+        x=1
+    ))
+    fig.update_layout(showlegend=True)
+    return fig
 
 
 def plotly_variances(
@@ -364,6 +624,10 @@ def plotly_tso_spectra(
     bands, bin_wl, bin_depth, bin_err, bin_widths = tso_data
     d_units = u(depth_units)
     fig = go.Figure()
+    
+    import pyratbay.constants as pc
+    for err in bin_err:
+        print(err/pc.ppm)
 
     ymax = 0.0
     ymin = np.inf

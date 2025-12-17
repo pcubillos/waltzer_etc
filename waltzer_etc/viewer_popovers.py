@@ -37,5 +37,5 @@ noise_choices = {
 tso_choices = {
     'tso': 'TSO',
     'snr': 'Depth S/N',
-    'uncertainties': 'Depth uncertainties',
+    #'uncertainties': 'Depth uncertainties',
 }
