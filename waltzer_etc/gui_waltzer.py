@@ -1184,14 +1184,13 @@ def server(input, output, session):
     clipboard = reactive.Value('')
     latest_pandeia = reactive.Value(None)
 
+    #@reactive.effect
+    #@reactive.event(input.delete_button)
+    #def _():
+    #    value = input.is_candidate.get()
+    #    ui.update_switch('is_candidate', value=not value)
+
     # Invisible flags
-    @reactive.effect
-    @reactive.event(input.delete_button)
-    def _():
-        value = input.is_candidate.get()
-        ui.update_switch('is_candidate', value=not value)
-
-
     @reactive.effect
     @reactive.event(bookmarked_sed)
     def _():
@@ -1558,7 +1557,6 @@ def server(input, output, session):
             choices=tso_labels,
             selected=f'{run_type}_{tso_label}',
         )
-        #print(tso_label, f'{run_type}_{tso_label}')
 
         success = "WALTzER TSO model simulated!"
         ui.notification_show(success, type="message", duration=2)
@@ -1566,22 +1564,16 @@ def server(input, output, session):
         return
 
 
-        # Now the transit spectrum
-        #error_msg = None
-        #if error_msg:
-        #    ui.notification_show(error_msg, type="warning", duration=5)
-
-
-    #@reactive.effect
-    #@reactive.event(input.delete_button)
-    #def _():
-    #    tso_key = input.display_tso_run.get()
-    #    if tso_key is None:
-    #        return
-    #    key, tso_label = tso_key.split('_', maxsplit=1)
-    #    del tso_runs[key][tso_label]
-    #    tso_labels = make_tso_labels(tso_runs)
-    #    ui.update_select('display_tso_run', choices=tso_labels)
+    @reactive.effect
+    @reactive.event(input.delete_button)
+    def _():
+        tso_key = input.display_tso_run.get()
+        if tso_key is None:
+            return
+        key, tso_label = tso_key.split('_', maxsplit=1)
+        del tso_runs[key][tso_label]
+        tso_labels = make_tso_labels(tso_runs)
+        ui.update_select('display_tso_run', choices=tso_labels)
 
 
     @reactive.effect

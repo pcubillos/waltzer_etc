@@ -70,29 +70,8 @@ def normalize_vega(wl, flux, v_mag):
     Examples
     --------
     >>> import waltzer_etc.sed as sed
-
     >>> sed_wl, sed_flux = sed.load_sed(6050.0)
     >>> norm_flux = sed.normalize_vega(sed_wl, sed_flux, v_mag=7.65)
-
-    >>> import pyratbay.constants as pc
-    >>> import pyratbay.spectrum as ps
-
-    >>> resolution = 60_000.0
-    >>> wl = ps.constant_resolution_spectrum(2_450, 20_000, resolution)
-    >>> flux = np.interp(wl, sed_wl, flux)
-    >>> flux = ps.inst_convolution(
-    >>>     wl, flux, resolution=3000, sampling_res=resolution,
-    >>> )
-    >>> norm_flux = sed.normalize_vega(wl, flux, v_mag=7.65)
-
-    >>> star_R = 1.19 * pc.rsun
-    >>> star_dist = 48.3016 * pc.parsec
-    >>> w_flux = flux * (star_R/star_dist)**2.0
-
-    >>> plt.figure(0, (8,4.5))
-    >>> plt.clf()
-    >>> plt.plot(wl, norm_flux, color='xkcd:green', label='synphot')
-    >>> plt.plot(wl, w_flux, color='xkcd:blue', label='distance', alpha=0.5)
     """
     # Note flam is erg / s / cm**2 / angstrom
     sed = syn.spectrum.SourceSpectrum(
