@@ -363,7 +363,6 @@ def plotly_variances(
     colors = [blue,'tomato', green, 'black']
 
     bands = tso['meta']['bands']
-    print(bands)
     wl_min = 2.0
     wl_max = 0.0
     for j,band in enumerate(bands):
@@ -625,10 +624,6 @@ def plotly_tso_spectra(
     d_units = u(depth_units)
     fig = go.Figure()
     
-    import pyratbay.constants as pc
-    for err in bin_err:
-        print(err/pc.ppm)
-
     ymax = 0.0
     ymin = np.inf
 
@@ -647,7 +642,6 @@ def plotly_tso_spectra(
             error_x = dict(type='data', array=bin_widths[i], visible=True)
         else:
             error_x = None
-
 
         marker = dict(symbol="circle", color=obs_col, size=5)
         show_legend = True

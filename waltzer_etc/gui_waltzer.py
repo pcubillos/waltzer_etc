@@ -711,8 +711,8 @@ app_ui = ui.page_fluid(
                     label=ui.markdown('**Bands**'),
                     choices = {
                         "nuv": "NUV (0.25-0.33 um)",
-                        "vis": "VIS (0.42-0.82 um)",
-                        "nir": "NIR (0.90-1.65 um)",
+                        "vis": "VIS (0.42-0.80 um)",
+                        "nir": "NIR (0.90-1.60 um)",
                     },
                     selected=['nuv', 'vis', 'nir'],
                 ),
