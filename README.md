@@ -14,14 +14,14 @@ git clone https://github.com/pcubillos/waltzer_etc
 
 Go into the ``waltzer_etc`` and execute this shell commad to install the required Python packages
 ```shell
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ### Download auxiliary files
 
-Fetch stellar SED's from this link: https://drive.google.com/file/d/1Xlg6qLCSNAlZ9gXwupWl-58bkfJ-6dhR/view?usp=sharing
+Fetch stellar SED's from this link: https://drive.google.com/file/d/1pvAs8Z7RUMJrNp-JsHunZyH2vqniUnJj/view?usp=sharing
 
-Unzip the file and place the ``models`` folder in the same directory where snr_waltzer.py is located.
+Unzip the file and place the .flx files into the ``waltzer_etc/data/models/`` folder.
 
 ## Stage 1: run the SNR
 
@@ -33,14 +33,13 @@ You will need an input .csv file with the targets to simulate (e.g., from a NASA
 - `'st_mass'`
 - `'ra'`
 - `'dec'`
-- `'sy_dist'`
 - `'sy_vmag'`
 
 There is an example target list ``'target_list_20250327.csv'`` in the repository.
 
 Run the code with this shell command:
 ```shell
-python snr_waltzer.py target_list.csv waltzer_snr.csv
+waltz target_list.csv waltzer_snr.csv
 ```
 
 This will produce an output .csv file ``waltzer_snr.csv`` with
@@ -57,20 +56,20 @@ Photometric SNR values (NIR) are band-integrated.
 
 Run this command to see all options
 ```shell
-python snr_waltzer.py -h
+waltz -h
 ```
 
 
 Run this command to compute stats for a fixed time duration (h)
 ```shell
-python snr_waltzer.py target_list_20250327.csv waltzer_snr.csv --tdur=2.5
+waltz target_list_20250327.csv waltzer_snr.csv --tdur=2.5
 ```
 
 
 ## Stage 2: simulate transit depth spectra
 
-Stage 1 will also produce a pickle file with the noise estimation for
-each source.  Combined this with a transit-depth model to simulate
+Stage 1 will also produce a pickle file (``waltzer_snr.pickle``) with the noise estimation for
+each source.  Combine this with a transit-depth model to simulate
 WALTzER observations (a sample transit-depth file is provided in the repo):
 
 ```python
@@ -79,19 +78,21 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import pyratbay.constants as pc
-import snr_waltzer as w
+import waltzer_etc as w
 plt.ion()
 
-# Load WALTzER SNR output pickle file and select a target
-tso_file = 'waltzer_snr_test.pickle'
+# Load a WALTzER SNR output pickle file
+tso_file = 'waltzer_snr.pickle'
 with open(tso_file, 'rb') as handle:
     spectra = pickle.load(handle)
 tso = spectra['HD 209458 b']
 
 # Load a transit-depth spectrum
 tdepth_file = 'transit_saturn_1600K_clear.dat'
-depth_model = np.loadtxt(tdepth_file, unpack=True)
+wl, depth = np.loadtxt(tdepth_file, unpack=True)
+depth_model = wl, depth
 
+# Simulate WALTzER observation
 sim = w.simulate_spectrum(
     tso, depth_model,
     n_obs=10,
@@ -99,32 +100,52 @@ sim = w.simulate_spectrum(
     noiseless=False,
 )
 
-
-# Plot model and WALTzER simulation
-waltzer_wl, waltzer_spec, waltzer_err, waltzer_widths = sim
-
-fs = 12
-fig = plt.figure(0)
+# Show noised-up WALTzER spectrum
+bands, waltzer_wl, waltzer_spec, waltzer_err, waltzer_widths = sim
+fig = plt.figure(1)
 plt.clf()
-plt.subplots_adjust(0.09, 0.12, 0.98, 0.98, hspace=0.18)
-fig.set_size_inches(8,4)
-ax = plt.subplot(111)
-ax.plot(depth_model[0], depth_model[1]/pc.percent, color='xkcd:blue')
-bands = ['NUV', 'VIS', 'NIR']
+fig.set_size_inches(8,5)
+plt.subplots_adjust(0.1,0.1,0.98,0.98, hspace=0.15)
+ax = plt.subplot(3,1,(1,2))
+plt.plot(depth_model[0], depth_model[1]/pc.percent, color='xkcd:blue')
+bands = tso['meta']['bands']
 for j,band in enumerate(bands):
     plt.errorbar(
         waltzer_wl[j], waltzer_spec[j]/pc.percent,
         waltzer_err[j]/pc.percent, xerr=waltzer_widths[j],
-        fmt='o', ecolor='cornflowerblue', color='royalblue',
+        fmt='o', ecolor='salmon', color='xkcd:orangered',
+        mfc='w', ms=4, zorder=0,
+    )
+plt.xscale('log')
+ax.set_xticks([0.25, 0.3, 0.4, 0.6, 0.8, 1.0, 1.6])
+ax.set_xticklabels([])
+ax.tick_params(which='both', direction='in')
+plt.xlim(0.24, 1.7)
+plt.ylim(0.99, 1.12)
+ax.set_ylabel('Transit depth (%)')
+
+ax = plt.subplot(3,1,3)
+for j,band in enumerate(bands):
+    ax.errorbar(
+        waltzer_wl[j], waltzer_err[j]/pc.ppm, xerr=waltzer_widths[j],
+        fmt='o', ecolor='salmon', color='tomato',
         mfc='w', ms=4, zorder=0,
     )
 ax.set_xscale('log')
+ax.set_yscale('log')
 ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
 ax.xaxis.set_major_formatter(matplotlib.ticker.ScalarFormatter())
-ax.set_xticks([2500, 3000, 4000, 5000, 7000, 10000, 16000])
-ax.set_xlim(2400, 17000)
-ax.set_ylim(0.99, 1.12)
-ax.set_xlabel('Wavelength (um)', fontsize=fs)
-ax.set_ylabel('Depth error (ppm)', fontsize=fs)
-ax.tick_params(which='both', right=True, direction='in', labelsize=fs-1)
+ax.set_xticks([0.25, 0.3, 0.4, 0.6, 0.8, 1.0, 1.6])
+ax.set_xlim(0.24, 1.7)
+ax.tick_params(which='both', direction='in')
+ax.set_xlabel('Wavelength (um)')
+ax.set_ylabel('Depth error (ppm)')
+```
+
+## WALTzER TSO GUI
+
+Alternativelty, there is an interactive GUI application to simulate WALTzER TSO's.  The GUI can be launch with this command:
+
+```shell
+waltz -tso
 ```
