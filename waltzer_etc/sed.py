@@ -1,8 +1,9 @@
-# Copyright (c) 2025 Sreejith and Patricio
-# LICENSE TBD
+# Copyright (c) 2025 Patricio Cubillos and A. G. Sreejith
+# WALTzER is open-source software under the GPL-2.0 license (see LICENSE)
 
 __all__ = [
     'normalize_vega',
+    'get_sed_list',
     'find_closest_teff',
     'load_sed',
 ]
@@ -18,6 +19,24 @@ import synphot.units as su
 from synphot.models import Empirical1D
 from .utils import ROOT
 
+base_dir = f'{ROOT}/data/models/'
+
+
+def get_sed_types():
+    """
+    Get the list of SED models.
+
+    Returns
+    -------
+    instruments: 1D list of strings
+        JWST instruments
+    """
+    return [
+        'waltzer',  # TBD: rename
+        #'phoenix',
+        #'k93models',
+        #'bt_settl',
+    ]
 
 def load_vega():
     vega_file = f"{ROOT}/data/alpha_lyr_stis_010.fits"
@@ -48,8 +67,6 @@ def normalize_vega(wl, flux, v_mag):
     norm_flux: 1D np.ndarrays
         Flux at Earth normalized according to V magnitude.
 
-    Examples
-    --------
     Examples
     --------
     >>> import waltzer_etc.sed as sed
@@ -96,7 +113,24 @@ def normalize_vega(wl, flux, v_mag):
     return norm_flux
 
 
-def find_closest_teff(teff, base_dir=None):
+def get_sed_list():
+    """
+    from waltzer_etc.utils import ROOT
+    """
+    temp_pattern = re.compile(r't(\d+)g[\d\.]+', re.IGNORECASE)
+    files = sorted([
+        file
+        for file in os.listdir(base_dir)
+        if temp_pattern.search(file)
+    ])
+    labels = [
+        f'T={int(file[1:6])}K log(g)={file[7:10]}'
+        for file in files
+    ]
+    return files, labels
+
+
+def find_closest_teff(teff):
     """
     Find folder in base_dir with closest temperature to teff.
 
@@ -104,29 +138,16 @@ def find_closest_teff(teff, base_dir=None):
     --------
     teff = 8000.0
     """
-    if base_dir is None:
-        base_dir = f'{ROOT}/data/models/'
-    temp_pattern = re.compile(r't(\d+)g[\d\.]+', re.IGNORECASE)
-    folders = sorted([
-        folder
-        for folder in os.listdir(base_dir)
-        if os.path.isdir(os.path.join(base_dir, folder))
-        if temp_pattern.search(folder)
-    ])
-    if len(folders) == 0:
-        raise ValueError(
-            f"No valid folders found in directory: {repr(base_dir)}"
-        )
+    files, labels = get_sed_list()
 
     temps = [
-        folder[1+folder.index('t'):folder.index('g')]
-        for folder in folders
+        file[1+file.index('t'):file.index('g')]
+        for file in files
     ]
     temps = np.array(temps, float)
 
     i = np.argmin(np.abs(temps - teff))
-    file = os.path.join(base_dir, folders[i], 'model.flx')
-    return file, temps[i]
+    return files[i], temps[i]
 
 
 def load_sed(teff=None, file=None):
@@ -151,7 +172,8 @@ def load_sed(teff=None, file=None):
         file, teff_match = find_closest_teff(teff)
 
     # Load SED flux
-    spectrum = np.loadtxt(file, unpack=True)
+    path_file = os.path.join(base_dir, file)
+    spectrum = np.loadtxt(path_file, unpack=True)
     wl, flux = spectrum[0:2]
 
     # Convert flux from XX[?] to erg s-1 cm-2 A-1

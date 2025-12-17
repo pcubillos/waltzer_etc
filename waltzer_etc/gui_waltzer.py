@@ -44,6 +44,7 @@ from gen_tso.pandeia_io.pandeia_setup import (
 )
 
 from waltzer_etc.utils import ROOT as W_ROOT
+from waltzer_etc.utils import inst_convolution
 import waltzer_etc as waltz
 import waltzer_etc.sed as sed
 # TBD waltzer.app_utils
@@ -52,8 +53,9 @@ from app_utils import (
     get_auto_sed,
     planet_model_name,
     #draw,
-    parse_depth_model,
-    #parse_obs,
+    read_depth_spectrum,
+    make_tso_label,
+    parse_obs,
     parse_sed,
     _safe_num,
 )
@@ -181,6 +183,23 @@ wl_micron = wl * pc.A/pc.um
 inst_resolution = 3000.0
 cache_seds = {}
 
+def waltz_model(wl_model, depth):
+    """
+    Resample model and apply WALTzER instrumental resolving power.
+    """
+    # interpolate
+    interp_depth = np.interp(
+        wl_micron, wl_model, depth, left=np.nan, right=np.nan,
+    )
+    waltzer_depth = inst_convolution(
+        wl_micron, interp_depth, inst_resolution, sampling_res=resolution,
+        mode='valid',
+    )
+    edge = (wl_micron.size - waltzer_depth.size) // 2
+    waltzer_wl = wl_micron[edge:-edge]
+    return waltzer_wl, waltzer_depth
+
+
 def load_sed(sed_model, cache_seds):
     """
     load SED wrapper with cache'd files.
@@ -190,7 +209,7 @@ def load_sed(sed_model, cache_seds):
     else:
         sed_wl, flux = sed.load_sed(file=sed_model)
         flux = np.interp(wl, sed_wl, flux)
-        sed_flux = ps.inst_convolution(
+        sed_flux = inst_convolution(
             wl, flux, inst_resolution, sampling_res=resolution,
         )
         cache_seds[sed_model] = sed_flux
@@ -216,9 +235,9 @@ def make_tso_labels(tso_runs):
         'Eclipse': {},
     }
     for key, runs in tso_runs.items():
-        for tso_label, tso_run in runs.items():
+        for tso_label, tso in runs.items():
             tso_key = f'{key}_{tso_label}'
-            tso_labels[key][tso_key] = tso_run['label']
+            tso_labels[key][tso_key] = tso['meta']['label']
     return tso_labels
 
 
@@ -271,14 +290,6 @@ sed_units = {
     "f_nu": f"{ergs_s_cm2} cm (wavenumber space)",
     "f_lambda": f"{ergs_s_cm2} cm\u207b\u00b9 (wavelength space)",
     "mJy": "mJy",
-}
-
-# 2D heatmap plots:
-heatmaps = {
-    '2d_flux': 'detector',
-    '2d_snr': 'snr',
-    '2d_saturation': 'saturation',
-    '2d_groups': 'ngroups_map',
 }
 
 layout_kwargs = dict(
@@ -616,10 +627,10 @@ app_ui = ui.page_fluid(
                     ),
                     # Row 2
                     ui.output_text('transit_dur_label'),
-                    ui.input_numeric("t_dur", "", value='2.0'),
+                    ui.input_numeric("t_dur", "", value='2.0', step=0.1),
                     # Row 3
                     ui.p("Obs_dur (h):"),
-                    ui.input_numeric("obs_dur", "", value='5.0'),
+                    ui.input_numeric("obs_dur", "", value='5.0', step=0.25),
                     width=1/2,
                     fixed_width=False,
                     heights_equal='all',
@@ -771,7 +782,7 @@ app_ui = ui.page_fluid(
                             id='plot_sed_resolution',
                             label='',
                             value=0.0,
-                            min=0.0, max=3000.0, step=25.0,
+                            min=0.0, max=6000.0, step=50.0,
                         ),
                         "Flux scale:",
                         ui.input_select(
@@ -824,7 +835,7 @@ app_ui = ui.page_fluid(
                             id='depth_resolution',
                             label='',
                             value=250.0,
-                            min=10.0, max=3000.0, step=25.0,
+                            min=0.0, max=6000.0, step=50.0,
                         ),
                         "Depth units:",
                         ui.input_select(
@@ -919,7 +930,7 @@ app_ui = ui.page_fluid(
                         ),
                         "Depth units:",
                         ui.input_select(
-                            id="plot_tso_units",
+                            id="tso_depth_units",
                             label="",
                             choices = depth_units,
                             selected='percent',
@@ -935,14 +946,14 @@ app_ui = ui.page_fluid(
                     ui.layout_column_wrap(
                         ui.input_numeric(
                             id='tso_wl_min', label='',
-                            value=None, min=0.5, max=30.0, step=0.1,
+                            value=None, min=0.2, max=30.0, step=0.02,
                         ),
                         ui.input_numeric(
                             id='tso_wl_max', label='',
-                            value=None, min=0.5, max=30.0, step=0.1,
+                            value=None, min=0.2, max=30.0, step=0.1,
                         ),
                         ui.input_select(
-                            id="plot_tso_xscale",
+                            id="tso_wl_scale",
                             label='',
                             choices=wl_scales,
                             selected='linear',
@@ -1170,7 +1181,6 @@ def server(input, output, session):
     preset_obs_dur = reactive.Value(None)
     esasky_command = reactive.Value(None)
     programs_info = reactive.Value(None)
-    tso_draw = reactive.Value(None)
     clipboard = reactive.Value('')
     latest_pandeia = reactive.Value(None)
 
@@ -1290,75 +1300,6 @@ def server(input, output, session):
             ui.notification_show(error_msg, type="error", duration=8)
 
 
-    #def old_run_waltzer(input):
-    #    """
-    #    TBD: scrap for parts
-
-    #    Perform a pandeia calculation on  science or acquisition target.
-    #    This might be a transit/eclipse TSO or a Pandeia perform_calculation
-    #    call.
-    #    """
-    #    # Target setup:
-    #    #planet_model_type, depth_label, rprs_sq, teq_planet = parse_obs(input)
-
-    #    #if in_transit_integs > nint:
-    #    #    error_msg = ui.markdown(
-    #    #        f"**Warning:**<br>observation time for **{nint} integration"
-    #    #        f"(s)** is less than the {obs_geometry} time.  Running "
-    #    #        "a perform_calculation()"
-    #    #    )
-    #    #    ui.notification_show(error_msg, type="warning", duration=5)
-
-    #    #if depth_label not in spectra:
-    #    #    if planet_model_type != 'Input':
-    #    #        spectra[obs_geometry][depth_label] = {
-    #    #            'wl': wl, 'depth': depth,
-    #    #        }
-    #    #    if depth_label not in bookmarked_spectra[obs_geometry]:
-    #    #        bookmarked_spectra[obs_geometry].append(depth_label)
-
-    #    # tso = 0 # pando.tso_calculation(
-
-    #    #tso_run = dict(
-    #    #    # The detector
-    #    #    # The SED
-    #    #    # The outputs
-    #    #    tso=tso,
-    #    #)
-
-    #    # The planet
-    #    #tso_run['depth_model'] = depth_model
-    #    #reports = (
-    #    #    tso['report_in']['scalar'],
-    #    #    tso['report_out']['scalar'],
-    #    #)
-
-    #    #tso_run['stats'] = jwst._print_pandeia_stats(
-    #    #    reports[0], format='html',
-    #    #)
-
-    #    #if run_is_tso or mode=='target_acq':
-    #    #    tso_runs[run_type][tso_label] = tso_run
-    #    #    tso_labels = make_tso_labels(tso_runs)
-    #    #    ui.update_select(
-    #    #        'display_tso_run',
-    #    #        choices=tso_labels,
-    #    #        selected=f'{run_type}_{tso_label}',
-    #    #    )
-
-    #    ## Update report
-    #    #sat_label = make_saturation_label(
-    #    #    mode, aperture, disperser, filter, subarray, sed_label,
-    #    #)
-    #    #pixel_rate, full_well = jwst.extract_flux_rate(tso, get_max=True)
-    #    #cache_saturation[sat_label] = dict(
-    #    #    brightest_pixel_rate=pixel_rate,
-    #    #    full_well=full_well,
-    #    #)
-    #    #saturation_label.set(sat_label)
-
-
-
     @reactive.effect
     @reactive.event(input.display_tso_run)
     def update_full_state():
@@ -1458,9 +1399,8 @@ def server(input, output, session):
 
         #    resolution = int(_safe_num(input.tso_resolution.get(), default=250, cast=int))
         #    n_obs = int(_safe_num(input.n_obs.get(), default=1, cast=int))
-        #    tso_draw.set(draw(tso['tso'], resolution, n_obs))
         #    units = 'percent'  if obs_geometry=='transit' else 'ppm'
-        #    ui.update_select('plot_tso_units', selected=units)
+        #    ui.update_select('tso_depth_units', selected=units)
         #    min_depth, max_depth, step = jwst._get_tso_depth_range(
         #        tso, resolution, units,
         #    )
@@ -1532,7 +1472,6 @@ def server(input, output, session):
     @reactive.event(input.run_waltzer)
     def _():
         name = input.target.get()
-        #target = catalog.get_target(name, is_transit=None, is_confirmed=None)
 
         # Get the variances first
         efficiency = input.efficiency.get() * pc.percent
@@ -1542,6 +1481,14 @@ def server(input, output, session):
         obs_geometry = input.obs_geometry.get()
         transit_dur = input.t_dur.get()
         obs_dur = input.obs_dur.get()
+
+        if obs_dur < transit_dur:
+            error_msg = ui.markdown(
+                f"**Warning:**<br>observation duration is shorter than "
+                f"the {obs_geometry} duration"
+            )
+            ui.notification_show(error_msg, type="warning", duration=5)
+            return
 
         if len(bands) == 0:
             # nothing to calculate
@@ -1562,6 +1509,9 @@ def server(input, output, session):
             bookmarked_spectra['sed'].append(sed_label)
             bookmarked_sed.set(True)
 
+        # Target setup:
+        planet_model_type, depth_label, rprs_sq, teq_planet = parse_obs(input)
+
         # Electrons per second from each source
         tso = {}
         for band in bands:
@@ -1580,40 +1530,28 @@ def server(input, output, session):
                 'wl_min': det.wl_min * pc.A / pc.um,
                 'wl_max': det.wl_max * pc.A / pc.um,
             }
+
+        tso_label = make_tso_label(input)
+
         tso['meta'] = {
             'bands': bands,
             'efficiency': efficiency,
+            'n_obs': n_obs,
+            'transit_dur': transit_dur,
+            # GUI-only meta
+            'target': name,
+            'sed_model': sed_model,
+            'obs_dur': obs_dur,
+            'obs_geometry': obs_geometry,
+            'label': tso_label,
+            'planet_model_type': planet_model_type,
+            'depth_label': depth_label,
+            'rprs_sq': rprs_sq,
+            'teq_planet': teq_planet,
         }
 
-        # Save outputs
-        #tso_label = make_obs_label(
-        #    name, bands, t_dur, obs_dur, run_type, sed_label, depth_label,
-        #)
-        tso_label = f'{name}_{sed_label}'
-
-        tso_run = dict(
-            # The detector
-            bands=bands,
-            label=tso_label,
-            efficiency=efficiency,
-            # The SED
-            target=name,
-            sed_type=sed_type,
-            sed_model=sed_model,
-            norm_mag=norm_mag,
-            obs_geometry=obs_geometry,
-            transit_dur=transit_dur,
-            obs_dur=obs_dur,
-            #planet_model_type=planet_model_type,
-            #depth_label=depth_label,
-            #rprs_sq=rprs_sq,
-            #teq_planet=teq_planet,
-            # The outputs
-            tso=tso,
-        )
-
         run_type = obs_geometry.capitalize()
-        tso_runs[run_type][tso_label] = tso_run
+        tso_runs[run_type][tso_label] = tso
         tso_labels = make_tso_labels(tso_runs)
         ui.update_select(
             'display_tso_run',
@@ -2181,7 +2119,7 @@ def server(input, output, session):
         bookmarked_depth.set(is_bookmarked)
         if is_bookmarked:
             bookmarked_spectra[obs_geometry].append(depth_label)
-            depth_label, wl, depth = parse_depth_model(input, spectra)
+            depth_label, wl, depth = read_depth_spectrum(input, spectra)
             if planet_model_type != 'Input':
                 spectra[obs_geometry][depth_label] = {'wl': wl, 'depth': depth}
         else:
@@ -2505,7 +2443,7 @@ def server(input, output, session):
 
         if plot_type == 'variance':
             fig = plt.plotly_variances(
-                tso['tso'],
+                tso,
                 wl_scale=wl_scale,
                 binsize=binsize,
             )
@@ -2514,20 +2452,19 @@ def server(input, output, session):
         # elif plot_type == 'snr':
         efficiency = input.efficiency.get() * pc.percent
         n_obs = input.n_obs.get()
-        obs_geometry = input.obs_geometry.get()
         transit_dur = input.t_dur.get()
         obs_dur = input.obs_dur.get()
 
         # Read model
-        print()
-        depth_model = 0.01
+        depth_label, wl, depth = read_depth_spectrum(input, spectra)
+        depth_model = wl, depth
 
         flux_data = waltz.simulate_fluxes(
-            tso['tso'], depth_model, n_obs, transit_dur, obs_dur, binsize,
+            tso, depth_model, n_obs, transit_dur, obs_dur, binsize,
             efficiency=efficiency,
         )
 
-        fig = plt.plotly_snr(
+        fig = plt.plotly_flux_snr(
             flux_data,
             wl_scale=wl_scale,
             y_scale='log',
@@ -2538,78 +2475,97 @@ def server(input, output, session):
 
     @render_plotly
     def plotly_tso():
+        input.redraw_tso.get()
         tso_key = input.display_tso_run.get()
         if tso_key is None:
             return go.Figure()
         key, tso_label = tso_key.split('_', maxsplit=1)
-        tso_run = tso_runs[key][tso_label]
-        wl_scale = input.plot_tso_xscale.get()
-        wl_range = [input.tso_wl_min.get(), input.tso_wl_max.get()]
+        tso = tso_runs[key][tso_label]
 
         plot_type = input.tso_plot.get()
+        resolution = input.tso_resolution.get()
+        wl_scale = input.tso_wl_scale.get()
+
+        efficiency = input.efficiency.get() * pc.percent
+        n_obs = input.n_obs.get()
+
+        obs_geometry = input.obs_geometry.get()
+        transit_dur = input.t_dur.get()
+        obs_dur = input.obs_dur.get()
+
+        if obs_dur < transit_dur:
+            error_msg = ui.markdown(
+                f"**Warning:**<br>observation duration is shorter than "
+                f"the {obs_geometry} duration"
+            )
+            ui.notification_show(error_msg, type="warning", duration=5)
+            return go.Figure()
+
+        if resolution == 0.0:
+            binsize = 1
+        else:
+            idx = searchsorted_closest(resolutions, resolution)
+            binsize = bins[idx]
+
+        # Transit-depth model at WALTzER resolving power
+        depth_label, wl, depth = read_depth_spectrum(input, spectra)
+        depth_model = waltz_model(wl, depth)
+
+        tso_data = waltz.simulate_spectrum(
+            tso, depth_model, n_obs, transit_dur, obs_dur, binsize,
+            efficiency=efficiency,
+        )
+
+        wl_scale = input.tso_wl_scale.get()
+        wl_min = input.tso_wl_min.get()
+        wl_max = input.tso_wl_max.get()
+        wl_range = [wl_min, wl_max]
+
         if plot_type == 'tso':
-            units = input.plot_tso_units.get()
-            sim_depths = tso_draw.get()
+            depth_units = input.tso_depth_units.get()
             depth_range = [input.tso_depth_min.get(), input.tso_depth_max.get()]
-            planet = tso_run['depth_label']
-            fig = plots.plotly_tso_spectra(
-                tso_run['tso'], sim_depths,
-                resolution=input.tso_resolution.get(),
-                model_label=planet,
-                units=units, wl_range=wl_range, wl_scale=wl_scale,
-                depth_range=depth_range, obs_geometry=tso_run['obs_geometry'],
+            fig = plt.plotly_tso_spectra(
+                tso, tso_data, depth_model,
+                model_label='model',
+                wl_range=wl_range, wl_scale=wl_scale,
+                depth_units=depth_units, depth_range=depth_range,
+                obs_geometry=obs_geometry,
             )
 
-        elif plot_type == 'fluxes':
-            fig = plots.plotly_tso_fluxes(
-                tso_run['tso'],
-                wl_range=wl_range, wl_scale=wl_scale,
-                obs_geometry=tso_run['obs_geometry'],
-            )
         elif plot_type == 'snr':
-            data = t_error
-            y_scale = 'log'
-            y_label = f'{obs_geometry}-depth error (ppm)'
-
-            fig = plots.plotly_tso_snr(
-                tso_run['tso'],
-                wl_range=wl_range, wl_scale=wl_scale,
-                obs_geometry=tso_run['obs_geometry'],
+            fig = plt.plotly_depth_snr(
+                tso,
+                tso_data,
+                wl_range=wl_range,
+                wl_scale=wl_scale,
+                y_scale='log',
+                y_label = f'{obs_geometry}-depth SNR'
             )
-        elif plot_type in heatmaps:
-            fig = plots.plotly_tso_2d(tso_run['tso'], heatmaps[plot_type])
+
+        #elif plot_type == 'uncertainties':
+        #    fig = plots.plotly_tso_fluxes(
+        #        tso,
+        #        wl_range=wl_range, wl_scale=wl_scale,
+        #        obs_geometry=obs_geometry,
+        #    )
         return fig
 
     @reactive.effect
-    @reactive.event(input.plot_tso_units)
+    @reactive.event(input.tso_depth_units)
     def rescale_tso_depths():
         tso_key = input.display_tso_run.get()
         if tso_key is None:
             return
         key, tso_label = tso_key.split('_', maxsplit=1)
         tso = tso_runs[key][tso_label]
-        resolution = int(_safe_num(input.tso_resolution.get(), default=250, cast=int))
-        units = input.plot_tso_units.get()
+        resolution = _safe_num(input.tso_resolution.get(), default=250, cast=int)
+        units = input.tso_depth_units.get()
 
         min_depth, max_depth, step = jwst._get_tso_depth_range(
             tso, resolution, units,
         )
         ui.update_numeric('tso_depth_min', value=min_depth, step=step)
         ui.update_numeric('tso_depth_max', value=max_depth, step=step)
-
-
-    @reactive.effect
-    @reactive.event(input.redraw_tso)
-    def redraw_tso_scatter():
-        tso_key = input.display_tso_run.get()
-        if tso_key is None:
-            return
-        key, tso_label = tso_key.split('_', maxsplit=1)
-        tso = tso_runs[key][tso_label]
-
-        #n_obs = int(_safe_num(input.n_obs.get(), default=1, cast=int))
-        #resolution = int(_safe_num(input.tso_resolution.get(), default=250, cast=int))
-        #tso_draw.set(draw(tso['tso'], resolution, n_obs))
 
 
     # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
