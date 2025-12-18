@@ -7,6 +7,7 @@ from pathlib import Path
 from datetime import timedelta, datetime
 from functools import reduce
 import operator
+import pickle
 
 import faicons as fa
 import numpy as np
@@ -1011,7 +1012,7 @@ app_ui = ui.page_fluid(
                     ui.layout_column_wrap(
                         ui.input_action_button(
                             id="export_button",
-                            label="Export",
+                            label="Save data",
                             class_="btn btn-outline-success btn-sm",
                             width='110px',
                         ),
@@ -1445,26 +1446,15 @@ def server(input, output, session):
         if tso_key is None:
             return
         key, tso_label = tso_key.split('_', maxsplit=1)
-        tso = tso_runs[key][tso_label]
+        #tso = tso_runs[key][tso_label]
 
-        filename = make_save_label(
-            tso['target'], tso['inst'], tso['mode'],
-            tso['aperture'], tso['disperser'], tso['filter'],
-        )
-        if key != 'Acquisition':
-            filename = filename.replace('tso_', f'tso_{key.lower()}_')
-        overwrite_warning = ''
-        if os.path.exists(f'{current_dir}/{filename}'):
-            overwrite_warning = (
-                ' (a file with same name already exists, '
-                'edit name to avoid overwriting)'
-            )
+        filename = f'{key}_waltzer_tso.pickle'
+
         m = ui.modal(
             ui.input_text(
                 id='tso_save_file',
-                label=f'Save TSO run to this file{overwrite_warning}:',
+                label='Save TSO run to this file:',
                 value=filename,
-                placeholder=tso_label,
                 width='100%',
             ),
             ui.input_text(
@@ -1472,12 +1462,6 @@ def server(input, output, session):
                 label='Located in this folder:',
                 value=current_dir,
                 placeholder='select a folder',
-                width='100%',
-            ),
-            ui.input_checkbox(
-                id="is_light",
-                label="Remove '2d' and '3d' fields (much smaller file size)",
-                value=True,
                 width='100%',
             ),
             ui.input_action_button(
@@ -1497,20 +1481,34 @@ def server(input, output, session):
         if tso_key is None:
             return
         key, tso_label = tso_key.split('_', maxsplit=1)
-        tso_run = tso_runs[key][tso_label]
+        tso = tso_runs[key][tso_label]
+
+        # Update meta
+        efficiency = input.efficiency.get() * pc.percent
+        n_obs = input.n_obs.get()
+        transit_dur = input.t_dur.get()
+        tso['meta']['efficiency'] = efficiency
+        tso['meta']['n_obs'] = n_obs
+        tso['meta']['transit_dur'] = transit_dur
 
         folder = input.tso_save_dir.get().strip()
         if folder == '':
             folder = '.'
+
         filename = input.tso_save_file.get()
         if filename.strip() == '':
             filename = f'tso_{key.lower()}_run.pickle'
+
         savefile = Path(f'{folder}/{filename}')
         if savefile.suffix == '':
             savefile = savefile.parent / f'{savefile.name}.pickle'
 
-        #is_light = input.is_light.get()
-        #jwst.save_tso(savefile, tso_run['tso'], lightweight=is_light)
+        tso_run = {
+            tso['meta']['target']: tso,
+        }
+        with open(savefile, 'wb') as handle:
+            pickle.dump(tso_run, handle, protocol=4)
+
         ui.modal_remove()
         ui.notification_show(
             f"TSO model saved to file: '{savefile}'",
