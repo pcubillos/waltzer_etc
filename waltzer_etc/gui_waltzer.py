@@ -7,6 +7,7 @@ from pathlib import Path
 from datetime import timedelta, datetime
 from functools import reduce
 import operator
+import pickle
 
 import faicons as fa
 import numpy as np
@@ -1010,8 +1011,8 @@ app_ui = ui.page_fluid(
                     # TBD: Set disabled based on existing TSOs
                     ui.layout_column_wrap(
                         ui.input_action_button(
-                            id="export_button",
-                            label="Export",
+                            id="save_data_button",
+                            label="Save data",
                             class_="btn btn-outline-success btn-sm",
                             width='110px',
                         ),
@@ -1139,12 +1140,7 @@ def server(input, output, session):
     esasky_command = reactive.Value(None)
     programs_info = reactive.Value(None)
     clipboard = reactive.Value('')
-
-    #@reactive.effect
-    #@reactive.event(input.delete_button)
-    #def _():
-    #    value = input.is_candidate.get()
-    #    ui.update_switch('is_candidate', value=not value)
+    data_clipboard = reactive.Value(None)
 
     # Invisible flags
     @reactive.effect
@@ -1438,7 +1434,7 @@ def server(input, output, session):
 
 
     @reactive.effect
-    @reactive.event(input.save_button)
+    @reactive.event(input.save_data_button)
     def _():
         # Make a filename from current TSO
         tso_key = input.display_tso_run.get()
@@ -1446,25 +1442,38 @@ def server(input, output, session):
             return
         key, tso_label = tso_key.split('_', maxsplit=1)
         tso = tso_runs[key][tso_label]
+        target = tso['meta']['target'].replace(' ', '')
+        filename = f'{key.lower()}_{target}_waltzer_tso.dat'
+        savefile = Path(f'{current_dir}/{filename}')
 
-        filename = make_save_label(
-            tso['target'], tso['inst'], tso['mode'],
-            tso['aperture'], tso['disperser'], tso['filter'],
+        labs, data = data_clipboard.get()
+        np.savetxt(
+            savefile,
+            data,
+            header=labs,
         )
-        if key != 'Acquisition':
-            filename = filename.replace('tso_', f'tso_{key.lower()}_')
-        overwrite_warning = ''
-        if os.path.exists(f'{current_dir}/{filename}'):
-            overwrite_warning = (
-                ' (a file with same name already exists, '
-                'edit name to avoid overwriting)'
-            )
+
+        ui.notification_show(
+            f"TSO model saved to file: '{savefile}'",
+            type="message",
+            duration=5,
+        )
+
+    @reactive.effect
+    @reactive.event(input.save_button)
+    def _():
+        # Make a filename from current TSO
+        tso_key = input.display_tso_run.get()
+        if tso_key is None:
+            return
+        key, tso_label = tso_key.split('_', maxsplit=1)
+        filename = f'{key.lower()}_waltzer_tso.pickle'
+
         m = ui.modal(
             ui.input_text(
                 id='tso_save_file',
-                label=f'Save TSO run to this file{overwrite_warning}:',
+                label='Save TSO run to this file:',
                 value=filename,
-                placeholder=tso_label,
                 width='100%',
             ),
             ui.input_text(
@@ -1472,12 +1481,6 @@ def server(input, output, session):
                 label='Located in this folder:',
                 value=current_dir,
                 placeholder='select a folder',
-                width='100%',
-            ),
-            ui.input_checkbox(
-                id="is_light",
-                label="Remove '2d' and '3d' fields (much smaller file size)",
-                value=True,
                 width='100%',
             ),
             ui.input_action_button(
@@ -1497,20 +1500,34 @@ def server(input, output, session):
         if tso_key is None:
             return
         key, tso_label = tso_key.split('_', maxsplit=1)
-        tso_run = tso_runs[key][tso_label]
+        tso = tso_runs[key][tso_label]
+
+        # Update meta
+        efficiency = input.efficiency.get() * pc.percent
+        n_obs = input.n_obs.get()
+        transit_dur = input.t_dur.get()
+        tso['meta']['efficiency'] = efficiency
+        tso['meta']['n_obs'] = n_obs
+        tso['meta']['transit_dur'] = transit_dur
 
         folder = input.tso_save_dir.get().strip()
         if folder == '':
             folder = '.'
+
         filename = input.tso_save_file.get()
         if filename.strip() == '':
             filename = f'tso_{key.lower()}_run.pickle'
+
         savefile = Path(f'{folder}/{filename}')
         if savefile.suffix == '':
             savefile = savefile.parent / f'{savefile.name}.pickle'
 
-        #is_light = input.is_light.get()
-        #jwst.save_tso(savefile, tso_run['tso'], lightweight=is_light)
+        tso_run = {
+            tso['meta']['target']: tso,
+        }
+        with open(savefile, 'wb') as handle:
+            pickle.dump(tso_run, handle, protocol=4)
+
         ui.modal_remove()
         ui.notification_show(
             f"TSO model saved to file: '{savefile}'",
@@ -2275,6 +2292,8 @@ def server(input, output, session):
 
         key, tso_label = tso_key.split('_', maxsplit=1)
         tso = tso_runs[key][tso_label]
+        bands = tso['meta']['bands']
+
         plot_type = input.noise_plot.get()
         resolution = input.noise_resolution.get()
         wl_scale = input.noise_wl_scale.get()
@@ -2286,6 +2305,13 @@ def server(input, output, session):
             binsize = bins[idx]
 
         if plot_type == 'variance':
+            head = 'wl(um)  source(e/s)  sky(e/s)  dark(e/s)  read_noise(e/s)  wl_half_width(um)'
+            wl = np.hstack([tso[band]['wl'] for band in bands])
+            var = np.hstack([tso[band]['variances'] for band in bands])
+            hw = np.hstack([tso[band]['half_widths'] for band in bands])
+            clip = np.vstack((wl, var, hw)).T
+            data_clipboard.set([head, clip])
+
             fig = plt.plotly_variances(
                 tso,
                 wl_scale=wl_scale,
@@ -2307,6 +2333,13 @@ def server(input, output, session):
             tso, depth_model, n_obs, transit_dur, obs_dur, binsize,
             efficiency=efficiency,
         )
+
+        head = 'wl(um)  flux_in(e)  flux_out(e)  var_in(e)  var_out(e)  wl_half_width(um) depth'
+        clip = np.vstack([
+            np.hstack([d for d in f_data])
+            for f_data in flux_data[1:]
+        ]).T
+        data_clipboard.set([head, clip])
 
         fig = plt.plotly_flux_snr(
             flux_data,
@@ -2359,6 +2392,13 @@ def server(input, output, session):
             tso, depth_model, n_obs, transit_dur, obs_dur, binsize,
             efficiency=efficiency,
         )
+
+        head = 'wl(um)  depth  depth_error  wl_half_width(um)'
+        clip = np.vstack([
+            np.hstack([d for d in t_data])
+            for t_data in tso_data[1:]
+        ]).T
+        data_clipboard.set([head, clip])
 
         wl_scale = input.tso_wl_scale.get()
         wl_min = input.tso_wl_min.get()

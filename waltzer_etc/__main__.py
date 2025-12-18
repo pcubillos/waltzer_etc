@@ -49,7 +49,7 @@ def parse_args():
     )
     parser.add_argument(
         "--debug",
-        type=bool,
+        action='store_true',
         default=False,
         help="Run GUI in debug mode",
     )
@@ -96,8 +96,7 @@ def main():
     args = parse_args()
 
     if args.tso:
-        # HACK: TBD change to reload = args.debug
-        reload = '--debug'
+        reload = args.debug
         app = os.path.realpath(os.path.dirname(__file__)) + '/gui_waltzer.py'
         run_app(app, reload=reload, launch_browser=True, port=8001, dev_mode=True)
         return
