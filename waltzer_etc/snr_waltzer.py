@@ -41,18 +41,17 @@ def calc_collecting_area(diameter, band):
     R_d1     = 0.80  # Dichroic 1 Reflectance/Transmission in %
     R_d2     = 0.80  # Dichroic 2 Reflectance/Transmission in %
 
-    R_uvfold = 1.00  # UV fold reflectance in %
-    R_uvgr   = 0.90  # UV grating reflectance in %
+    R_uvfold = 0.87  # UV fold reflectance in %
+    R_uvgr   = 0.87  # UV grating reflectance in %
     Uv_geff  = 0.65  # UV grating effeciency in %
     Uv_detQE = 0.55  # UV detector QE in %
 
     R_opfold = 0.90  # Optical fold reflectance in %
     R_opgr   = 0.90  # Optical grating reflectance in %
     Op_geff  = 0.75  # Optical grating effeciency in %
-    Op_detQE = 0.90  # Optical detector QE in %
+    Op_detQE = 0.80  # Optical detector QE in %
 
-    BB_lens  = 0.90  # IR Broad band lens transmission in % IN REALITY, A FOLD
-    BB_detQE = 0.85  # IR Broad band detector QE in %
+    BB_detQE = 0.80  # IR Broad band detector QE in %
 
     # Effective collecing areas in cm^2
     if band == 'nuv':
@@ -65,14 +64,14 @@ def calc_collecting_area(diameter, band):
     if band == 'vis':
         eff_area = (
             primary_area * Rprim * Rsec * Sec_obstr *
-            R_d1 * R_d2 * R_opfold * R_opgr * Op_geff * Op_detQE
+            R_d1 * R_d2 * R_opfold**2 * R_opgr * Op_geff * Op_detQE
         )
         return eff_area
 
     if band == 'nir':
         eff_area = (
             primary_area * Rprim * Rsec * Sec_obstr *
-            R_d1 * R_d2 * BB_lens * BB_detQE
+            R_d1 * R_d2 * R_opfold * BB_detQE
         )
         return eff_area
 
@@ -80,7 +79,7 @@ def calc_collecting_area(diameter, band):
 
 
 class Detector():
-    def __init__(self, detector_cfg, diameter=30.0):
+    def __init__(self, detector_cfg, diameter=35.0):
         """
         detector_cfg = 'detectors/waltzer_nuv.cfg'
         det = Detector(detector_cfg)
@@ -761,7 +760,7 @@ def simulate_spectrum(
 def waltzer_snr(
          csv_file=None,
          output_csv="waltzer_snr.csv",
-         diameter=30.0,
+         diameter=35.0,
          efficiency=0.6,
          t_dur=None,
          n_obs=10,
@@ -818,7 +817,7 @@ def waltzer_snr(
     >>> from waltzer_etc.snr_waltzer import *
     >>> from waltzer_etc.utils import ROOT
     >>> import waltzer_etc.sed as sed
-    >>> diameter = 30.0
+    >>> diameter = 35.0
     >>> csv_file = 'target_list_20250327.csv'
     >>> efficiency = 0.6
     >>> t_dur = 2.5
