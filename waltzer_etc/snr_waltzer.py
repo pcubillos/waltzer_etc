@@ -118,7 +118,7 @@ class Detector():
         self.wl_max = det.getfloat('wl_max')
 
         wl_edges = ps.constant_resolution_spectrum(
-            2_500, 20_000, resolution=2.0*self.resolution,
+            2_400, 20_000, resolution=2.0*self.resolution,
         )
         i_min = np.searchsorted(wl_edges, self.wl_min)
         i_max = np.searchsorted(wl_edges, self.wl_max)
@@ -163,10 +163,10 @@ class Detector():
         --------
         >>> # TBD
         >>> resolution = 60_000.0
-        >>> wl = ps.constant_resolution_spectrum(2_450, 20_000, resolution)
+        >>> wl = ps.constant_resolution_spectrum(2_400, 20_000, resolution)
         >>> inst_resolution = 3_000.0
         >>> bin_edges = ps.constant_resolution_spectrum(
-        >>>     2_500, 20_000, 2.0*inst_resolution,
+        >>>     2_400, 20_000, 2.0*inst_resolution,
         >>> )
 
         >>> # Load stellar SED
@@ -680,7 +680,7 @@ def simulate_spectrum(
     """
     # An interpolator to eval the depth over the WALTzER bands
     if np.isscalar(depth_model):
-        wl_model = ps.constant_resolution_spectrum(0.245, 20.0, resolution=6000)
+        wl_model = ps.constant_resolution_spectrum(0.24, 20.0, resolution=6000)
         depth = np.tile(depth_model, len(wl_model))
         fill_value = 'extrapolate'
     else:
@@ -835,7 +835,7 @@ def waltzer_snr(
 
     # Higher resolution for models (will be bin down to WALTzER)
     resolution = 60_000.0
-    wl = ps.constant_resolution_spectrum(2_450, 20_000, resolution=resolution)
+    wl = ps.constant_resolution_spectrum(2_350, 20_000, resolution=resolution)
 
     # Target list file path
     data = pd.read_csv(csv_file, delimiter=',', comment='#')
