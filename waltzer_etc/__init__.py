@@ -1,8 +1,10 @@
-# Copyright (c) 2025 Sreejith and Patricio
-# LICENSE TBD
+# Copyright (c) 2025 Patricio Cubillos and A. G. Sreejith
+# WALTzER is open-source software under the GPL-2.0 license (see LICENSE)
 
-from .version import __version__
 from .snr_waltzer import *
+from . import snr_waltzer
+from .version import __version__
+
 
 __all__ = (
     snr_waltzer.__all__

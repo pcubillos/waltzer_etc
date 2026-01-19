@@ -6,6 +6,7 @@ import os
 import argparse
 from shiny import run_app
 from .snr_waltzer import waltzer_snr
+from .__init__ import __version__
 
 
 def is_csv_file(filename: str) -> str:
@@ -22,6 +23,13 @@ def parse_args():
     """
     parser = argparse.ArgumentParser(
         description="WALTzER SNR and ETC."
+    )
+
+    parser.add_argument(
+        '-v', '--version',
+        action='version',
+        help="Show WALTzER's version.",
+        version=f'WALTzER ETC version {__version__}',
     )
 
     # Required positional arguments
