@@ -711,7 +711,7 @@ app_ui = ui.page_fluid(
                     id="bands",
                     label=ui.markdown('**Bands**'),
                     choices = {
-                        "nuv": "NUV (0.25-0.33 um)",
+                        "nuv": "NUV (0.24-0.32 um)",
                         "vis": "VIS (0.42-0.80 um)",
                         "nir": "NIR (0.90-1.60 um)",
                     },
@@ -769,7 +769,7 @@ app_ui = ui.page_fluid(
                     ui.layout_column_wrap(
                         ui.input_numeric(
                             id='sed_wl_min', label='',
-                            value=0.24, min=0.2, max=30.0, step=0.02,
+                            value=0.23, min=0.2, max=30.0, step=0.02,
                         ),
                         ui.input_numeric(
                             id='sed_wl_max', label='',
@@ -820,7 +820,7 @@ app_ui = ui.page_fluid(
                     ui.layout_column_wrap(
                         ui.input_numeric(
                             id='depth_wl_min', label='',
-                            value=0.24, min=0.2, max=30.0, step=0.02,
+                            value=0.23, min=0.2, max=30.0, step=0.02,
                         ),
                         ui.input_numeric(
                             id='depth_wl_max', label='',

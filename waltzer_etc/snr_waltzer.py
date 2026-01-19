@@ -41,18 +41,17 @@ def calc_collecting_area(diameter, band):
     R_d1     = 0.80  # Dichroic 1 Reflectance/Transmission in %
     R_d2     = 0.80  # Dichroic 2 Reflectance/Transmission in %
 
-    R_uvfold = 1.00  # UV fold reflectance in %
-    R_uvgr   = 0.90  # UV grating reflectance in %
+    R_uvfold = 0.87  # UV fold reflectance in %
+    R_uvgr   = 0.87  # UV grating reflectance in %
     Uv_geff  = 0.65  # UV grating effeciency in %
     Uv_detQE = 0.55  # UV detector QE in %
 
     R_opfold = 0.90  # Optical fold reflectance in %
     R_opgr   = 0.90  # Optical grating reflectance in %
     Op_geff  = 0.75  # Optical grating effeciency in %
-    Op_detQE = 0.90  # Optical detector QE in %
+    Op_detQE = 0.80  # Optical detector QE in %
 
-    BB_lens  = 0.90  # IR Broad band lens transmission in % IN REALITY, A FOLD
-    BB_detQE = 0.85  # IR Broad band detector QE in %
+    BB_detQE = 0.80  # IR Broad band detector QE in %
 
     # Effective collecing areas in cm^2
     if band == 'nuv':
@@ -65,14 +64,14 @@ def calc_collecting_area(diameter, band):
     if band == 'vis':
         eff_area = (
             primary_area * Rprim * Rsec * Sec_obstr *
-            R_d1 * R_d2 * R_opfold * R_opgr * Op_geff * Op_detQE
+            R_d1 * R_d2 * R_opfold**2 * R_opgr * Op_geff * Op_detQE
         )
         return eff_area
 
     if band == 'nir':
         eff_area = (
             primary_area * Rprim * Rsec * Sec_obstr *
-            R_d1 * R_d2 * BB_lens * BB_detQE
+            R_d1 * R_d2 * R_opfold * BB_detQE
         )
         return eff_area
 
@@ -80,7 +79,7 @@ def calc_collecting_area(diameter, band):
 
 
 class Detector():
-    def __init__(self, detector_cfg, diameter=30.0):
+    def __init__(self, detector_cfg, diameter=35.0):
         """
         detector_cfg = 'detectors/waltzer_nuv.cfg'
         det = Detector(detector_cfg)
@@ -119,7 +118,7 @@ class Detector():
         self.wl_max = det.getfloat('wl_max')
 
         wl_edges = ps.constant_resolution_spectrum(
-            2_500, 20_000, resolution=2.0*self.resolution,
+            2_400, 20_000, resolution=2.0*self.resolution,
         )
         i_min = np.searchsorted(wl_edges, self.wl_min)
         i_max = np.searchsorted(wl_edges, self.wl_max)
@@ -164,10 +163,10 @@ class Detector():
         --------
         >>> # TBD
         >>> resolution = 60_000.0
-        >>> wl = ps.constant_resolution_spectrum(2_450, 20_000, resolution)
+        >>> wl = ps.constant_resolution_spectrum(2_400, 20_000, resolution)
         >>> inst_resolution = 3_000.0
         >>> bin_edges = ps.constant_resolution_spectrum(
-        >>>     2_500, 20_000, 2.0*inst_resolution,
+        >>>     2_400, 20_000, 2.0*inst_resolution,
         >>> )
 
         >>> # Load stellar SED
@@ -681,7 +680,7 @@ def simulate_spectrum(
     """
     # An interpolator to eval the depth over the WALTzER bands
     if np.isscalar(depth_model):
-        wl_model = ps.constant_resolution_spectrum(0.245, 20.0, resolution=6000)
+        wl_model = ps.constant_resolution_spectrum(0.24, 20.0, resolution=6000)
         depth = np.tile(depth_model, len(wl_model))
         fill_value = 'extrapolate'
     else:
@@ -761,7 +760,7 @@ def simulate_spectrum(
 def waltzer_snr(
          csv_file=None,
          output_csv="waltzer_snr.csv",
-         diameter=30.0,
+         diameter=35.0,
          efficiency=0.6,
          t_dur=None,
          n_obs=10,
@@ -818,7 +817,7 @@ def waltzer_snr(
     >>> from waltzer_etc.snr_waltzer import *
     >>> from waltzer_etc.utils import ROOT
     >>> import waltzer_etc.sed as sed
-    >>> diameter = 30.0
+    >>> diameter = 35.0
     >>> csv_file = 'target_list_20250327.csv'
     >>> efficiency = 0.6
     >>> t_dur = 2.5
@@ -836,7 +835,7 @@ def waltzer_snr(
 
     # Higher resolution for models (will be bin down to WALTzER)
     resolution = 60_000.0
-    wl = ps.constant_resolution_spectrum(2_450, 20_000, resolution=resolution)
+    wl = ps.constant_resolution_spectrum(2_350, 20_000, resolution=resolution)
 
     # Target list file path
     data = pd.read_csv(csv_file, delimiter=',', comment='#')
