@@ -210,15 +210,13 @@ class Detector():
 
         # Spectroscopy: integrate (photons s-1 A-1 pix-1) to photons s-1 pix-1
         wl_edges = self._wl_edges
+        edge_idx = np.searchsorted(wl, wl_edges)
         bin_flux = np.zeros(self.nwave)
         bin_bkg = np.zeros(self.nwave)
         for i in range(self.nwave):
-            bin_mask = (
-                (wl>=wl_edges[i]) &
-                (wl<=wl_edges[i+1])
-            )
-            bin_flux[i] = np.trapezoid(photons[bin_mask], wl[bin_mask])
-            bin_bkg[i] = np.trapezoid(bkg_photons[bin_mask], wl[bin_mask])
+            i1, i2 = edge_idx[i], edge_idx[i+1]+1
+            bin_flux[i] = np.trapezoid(photons[i1:i2], wl[i1:i2])
+            bin_bkg[i] = np.trapezoid(bkg_photons[i1:i2], wl[i1:i2])
 
         return bin_flux, bin_bkg
 
@@ -813,7 +811,8 @@ def waltzer_snr(
 
     Example (TBD while we build this machine)
     -------
-    >>> import snr_waltzer as w
+    >>> import waltzer_etc as w
+    >>> from waltzer_etc.snr_waltzer import Detector
     >>> from waltzer_etc.snr_waltzer import *
     >>> from waltzer_etc.utils import ROOT
     >>> import waltzer_etc.sed as sed
@@ -833,7 +832,7 @@ def waltzer_snr(
     # WALTzER resolution (FWHM) and wavelength grid (angstrom)
     inst_resolution = vis_det.resolution
 
-    # Higher resolution for models (will be bin down to WALTzER)
+    # Higher resolution for models (will be binned down to WALTzER later)
     resolution = 60_000.0
     wl = ps.constant_resolution_spectrum(2_350, 20_000, resolution=resolution)
 
