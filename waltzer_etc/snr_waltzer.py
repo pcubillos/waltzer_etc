@@ -82,10 +82,11 @@ class Detector():
 
         Parameters
         ----------
-        wl_edges: 1D float array
-            Edges of the instrumental bins (angstrom).
-        eff_collecting_area: float
-            Effective collecting area of the instrument (cm²).
+        detector_cfg: string
+            Path to a detector configuration file.
+            Or 'nuv', 'vis', 'nir' to use one of the default configurations.
+        diameter: float
+            Telescope primary-mirror diameter (cm).
 
         Examples
         --------
@@ -114,12 +115,12 @@ class Detector():
         self.wl_max = det.getfloat('wl_max')
 
         wl_edges = ps.constant_resolution_spectrum(
-            2_400, 20_000, resolution=2.0*self.resolution,
+            0.24, 2.0, resolution=2.0*self.resolution,
         )
         i_min = np.searchsorted(wl_edges, self.wl_min)
         i_max = np.searchsorted(wl_edges, self.wl_max)
         self._wl_edges = wl_edges[i_min:i_max]
-        # Center and half-widths of wavelength bins (angstrom):
+        # Center and half-widths of wavelength bins (micron):
         self.wl = 0.5 * (wl_edges[i_min+1:i_max] + wl_edges[i_min:i_max-1])
         self.half_widths = self.wl - wl_edges[i_min:i_max-1]
 
@@ -131,6 +132,8 @@ class Detector():
         # TBD: In future this might depend on {RA,dec} of targets
         # Background flux (erg s-1 cm-2 A-1 arcsec-2)
         wl_bkg, sky = np.loadtxt(f'{ROOT}/data/background.txt', unpack=True)
+        # Convert wavelength from angstrom to micron:
+        wl_bkg /= pc.um/pc.A
         self.bkg_model = si.interp1d(
             wl_bkg, sky, kind='slinear', bounds_error=False,
         )
@@ -142,11 +145,9 @@ class Detector():
         Parameters
         ----------
         wl: 1D float array
-            Input wavelength array (angstrom).
+            Input wavelength array (micron).
         flux: 1D float array
-            Input flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹).
-        bkg_flux: 1D float array
-            Background flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹ pixel⁻¹).
+            Input flux spectrum (mJy).
 
         Returns
         -------
@@ -159,7 +160,7 @@ class Detector():
         --------
         >>> # TBD
         >>> resolution = 60_000.0
-        >>> wl = ps.constant_resolution_spectrum(2_400, 20_000, resolution)
+        >>> wl = ps.constant_resolution_spectrum(0.23, 2.0, resolution)
         >>> inst_resolution = 3_000.0
         >>> bin_edges = ps.constant_resolution_spectrum(
         >>>     2_400, 20_000, 2.0*inst_resolution,
@@ -186,13 +187,16 @@ class Detector():
         >>> wl_min = 6700
         >>> wl_max = 7100
         """
-        # Convert flux (erg s-1 cm-2 A-1) to photons s-1 A-1
-        photons = flux * wl*pc.A / (pc.c*pc.h) * self.eff_area
+        # Convert flux (mJy) to photons s-1 Hz-1
+        photon_energy = pc.h * pc.c / (wl*pc.um)
+        photons_nu = 1e-26 * flux / photon_energy * self.eff_area
+        # Now convert to photons s-1 um-1
+        photons = photons_nu * pc.c / (wl*pc.um)**2.0 * pc.um
 
         # Background flux (erg s-1 cm-2 A-1 pixel-1)
         bkg_flux = self.bkg_model(wl) * self.pix_scale**2.0
-        # Convert flux (erg s-1 cm-2 A-1 pixel) to photons s-1 A-1 pixel-1
-        bkg_photons = bkg_flux * wl*pc.A / (pc.c*pc.h) * self.eff_area
+        # Convert flux (erg s-1 cm-2 A-1 pixel-1) to photons s-1 um-1 pixel-1
+        bkg_photons = bkg_flux / photon_energy * self.eff_area * pc.um/pc.A
 
         # Integrate at each instrumental bin to get photons s-1
         if self.mode == 'photometry':
@@ -224,16 +228,16 @@ class Detector():
         Parameters
         ----------
         wl: 1D float array
-            Input wavelength array (angstrom).
+            Input wavelength array (microns).
         flux: 1D float array
-            Input flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹).
+            Input flux spectrum (mJy).
 
         Returns
         -------
         mean_flux: float
-            Mean flux within the wavelength range (erg s⁻¹ cm⁻² angstrom⁻¹).
+            Mean flux within the wavelength range (mJy).
         max_flux: float
-            Maximum flux within the wavelength range (erg s⁻¹ cm⁻² angstrom⁻¹).
+            Maximum flux within the wavelength range (mJy).
         """
         band = (wl > self.wl_min) & (wl < self.wl_max)
         mean_flux = np.mean(flux[band])
@@ -248,9 +252,9 @@ class Detector():
         Parameters
         ----------
         wl: 1D float array
-            Input wavelength array (angstrom).
+            Input wavelength array (micron).
         flux: 1D float array
-            Input flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹).
+            Input flux spectrum (mJy).
         integ_time: Float
             Total integration time (s).  Leave as integ_time=1.0 to
             obtain the values per second.
@@ -277,9 +281,9 @@ class Detector():
         Parameters
         ----------
         wl: 1D float array
-            Input wavelength array (angstrom).
+            Input wavelength array (micron).
         flux: 1D float array
-            Input flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹).
+            Input flux spectrum (mJy).
         integ_time: Float
             Total integration time (s).
 
@@ -349,9 +353,9 @@ class Detector():
         Parameters
         ----------
         wl: 1D float array
-            Input wavelength array (angstrom).
+            Input wavelength array (micron).
         flux: 1D float array
-            Input flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹).
+            Input flux spectrum (mJy).
         integ_time: Float
             In-transit exposure time (s).
 

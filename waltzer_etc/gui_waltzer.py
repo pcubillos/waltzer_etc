@@ -183,7 +183,7 @@ def load_sed(sed_model, cache_seds):
     if sed_model in cache_seds:
         sed_flux = cache_seds[sed_model]
     else:
-        sed_wl, flux = sed.load_sed(file=sed_model)
+        sed_wl, flux = sed.load_sed_llmodels(file=sed_model)
         flux = np.interp(wl, sed_wl, flux)
         sed_flux = inst_convolution(
             wl, flux, inst_resolution, sampling_res=resolution,

@@ -9,7 +9,6 @@ import pickle
 
 import numpy as np
 import pandas as pd
-import pyratbay.constants as pc
 import pyratbay.spectrum as ps
 from .snr_waltzer import Detector
 from . import sed
@@ -95,7 +94,7 @@ def waltzer_sample(
 
     # Higher resolution for models (will be binned down to WALTzER later)
     resolution = 60_000.0
-    wl = ps.constant_resolution_spectrum(2_350, 20_000, resolution=resolution)
+    wl = ps.constant_resolution_spectrum(0.23, 2.0, resolution=resolution)
 
     # Target list file path
     data = pd.read_csv(csv_file, delimiter=',', comment='#')
@@ -134,7 +133,7 @@ def waltzer_sample(
             sed_flux = cache_seds[sed_file]
         else:
             # Load SED flux
-            sed_wl, flux = sed.load_sed(file=sed_file)
+            sed_wl, flux = sed.load_sed_llmodels(file=sed_file)
             # Interpolate to regular grid and apply waltzer resolution
             flux = np.interp(wl, sed_wl, flux)
             sed_flux = inst_convolution(
@@ -171,14 +170,14 @@ def waltzer_sample(
             total_variance = np.sum(variances, axis=0)
             band_flux = variances[0]
             tso[band] = {
-                'wl': det.wl * pc.A / pc.um,
+                'wl': det.wl,
                 'flux': band_flux,
                 'variance': total_variance,
                 'variances': variances,
                 'det_type': det.mode,
-                'half_widths': det.half_widths * pc.A / pc.um,
-                'wl_min': det.wl_min * pc.A / pc.um,
-                'wl_max': det.wl_max * pc.A / pc.um,
+                'half_widths': det.half_widths,
+                'wl_min': det.wl_min,
+                'wl_max': det.wl_max,
             }
 
         tso['meta'] = {
@@ -221,9 +220,9 @@ def waltzer_sample(
     header = [h.strip() for h in header]
     units = (
         "#name, K, R_sun, M_sun, deg, deg, , h,"
-        "erg s-1 cm-2 A-1, erg s-1 cm-2 A-1, , , ppm,"
-        "erg s-1 cm-2 A-1, erg s-1 cm-2 A-1, , , ppm,"
-        "erg s-1 cm-2 A-1, erg s-1 cm-2 A-1, , ppm"
+        "mJy, mJy, , , ppm,"
+        "mJy, mJy, , , ppm,"
+        "mJy, mJy, , ppm"
     ).split(',')
 
     with open(output_csv, 'w') as f:

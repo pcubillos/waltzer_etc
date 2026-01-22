@@ -5,7 +5,8 @@ __all__ = [
     'normalize_vega',
     'get_sed_list',
     'find_closest_teff',
-    'load_sed',
+    'load_sed_llmodels',
+    #'load_sed',
 ]
 
 import os
@@ -17,7 +18,7 @@ import pyratbay.constants as pc
 import synphot as syn
 import synphot.units as su
 from synphot.models import Empirical1D
-from .utils import ROOT
+from .utils import ROOT, to_mJy
 
 base_dir = f'{ROOT}/data/models/'
 
@@ -32,7 +33,7 @@ def get_sed_types():
         JWST instruments
     """
     return [
-        'waltzer',  # TBD: rename
+        'llmodels',
         #'phoenix',
         #'k93models',
         #'bt_settl',
@@ -56,28 +57,27 @@ def normalize_vega(wl, flux, v_mag):
     Parameters
     ----------
     wl: 1D darray
-        Wavelength array in angstrom.
+        Wavelength array in micron.
     flux: 1D darray
-        Flux spectrum in erg s⁻¹ cm⁻² angstrom⁻¹.
+        Flux spectrum in mJy.
     v_mag: Float
         Johnson V magnitude.
 
     Returns
     -------
     norm_flux: 1D np.ndarrays
-        Flux at Earth normalized according to V magnitude.
+        Flux at Earth normalized according to V magnitude (mJy).
 
     Examples
     --------
     >>> import waltzer_etc.sed as sed
-    >>> sed_wl, sed_flux = sed.load_sed(6050.0)
+    >>> sed_wl, sed_flux = sed.load_sed_llmodels(6050.0)
     >>> norm_flux = sed.normalize_vega(sed_wl, sed_flux, v_mag=7.65)
     """
-    # Note flam is erg / s / cm**2 / angstrom
     sed = syn.spectrum.SourceSpectrum(
         Empirical1D,
-        points=wl*u.angstrom,
-        lookup_table=flux*su.FLAM,
+        points=wl*u.micron,
+        lookup_table=flux*u.mJy,
     )
 
     # passband
@@ -87,14 +87,14 @@ def normalize_vega(wl, flux, v_mag):
     # Normalization
     norm_flux = v_mag * su.VEGAMAG
     norm_sed = sed.normalize(norm_flux, band=johnson_v, vegaspec=vega)
-    norm_flux = norm_sed(norm_sed.waveset, flux_unit=su.FLAM).value
+    norm_flux = norm_sed(norm_sed.waveset, flux_unit=u.mJy).value
 
     return norm_flux
 
 
 def get_sed_list():
     """
-    from waltzer_etc.utils import ROOT
+    Get all LLMODELS SEDs
     """
     temp_pattern = re.compile(r't(\d+)g[\d\.]+', re.IGNORECASE)
     files = sorted([
@@ -115,7 +115,9 @@ def find_closest_teff(teff):
 
     Examples
     --------
-    teff = 8000.0
+    >>> import waltzer_etc.sed as sed
+    >>> teff = 8000.0
+    >>> file, temp = sed.find_closest_teff(8000.0)
     """
     files, labels = get_sed_list()
 
@@ -129,7 +131,7 @@ def find_closest_teff(teff):
     return files[i], temps[i]
 
 
-def load_sed(teff=None, file=None):
+def load_sed_llmodels(teff=None, file=None):
     """
     Load an SED model from WALTzER grid.
 
@@ -138,10 +140,17 @@ def load_sed(teff=None, file=None):
     teff: Float
         SED effective temperature.
 
+    Return
+    ------
+    wl: 1D float array
+        SED wavelength array (microns).
+    flux: 1D float array
+        SED spectrum array (mJy).
+
     Examples
     --------
     >>> import waltzer_etc.sed as sed
-    >>> sed_wl, sed_flux = sed.load_sed(6050.0)
+    >>> sed_wl, sed_flux = sed.load_sed_llmodels(6050.0)
     """
     # Load SED model spectrum based on temperature
     if file is None and teff is None:
@@ -155,7 +164,12 @@ def load_sed(teff=None, file=None):
     spectrum = np.loadtxt(path_file, unpack=True)
     wl, flux = spectrum[0:2]
 
-    # Convert flux from XX[?] to erg s-1 cm-2 A-1
-    flux *= (pc.c / pc.A) / (wl**2) * 4*np.pi
+    # Convert wavelength from angstrom to microns
+    wl = wl * pc.A / pc.um
+
+    # Convert flux to (erg s-1 cm-2 Hz-1) and then to mJy
+    flux *= 4*np.pi
+    flux = to_mJy(flux, wl, 'f_freq')
+    # TBD: check I'm not missing a factor of A**2 or 1/A**2
 
     return wl, flux

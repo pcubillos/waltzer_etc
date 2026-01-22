@@ -3,6 +3,7 @@
 
 __all__ = [
     'ROOT',
+    'to_mJy',
     'inst_convolution',
 ]
 
@@ -17,6 +18,40 @@ from scipy.signal.windows import gaussian
 
 
 ROOT = os.path.realpath(os.path.dirname(__file__)) + '/'
+
+
+
+def to_mJy(flux, wl, units):
+    """
+    Convert flux spectra to mJy units.
+
+    Parameters
+    ----------
+    flux: 1D float array
+        SED spectrum array (see units below).
+    wl: 1D float array
+        SED wavelength array (microns).
+    units: string
+        Input units of flux:
+        - 'f_freq'   (for erg s-1 cm-2 Hz-1)
+        - 'f_nu'     (for for erg s-1 cm-2 cm)
+        - 'f_lambda' (for erg s-1 cm-2 cm-1)
+
+    Returns
+    -------
+    flux: 1D float array
+        SED spectrum in mJy.
+    """
+    if units == 'f_freq':
+        u = 10**26
+    elif units == 'f_nu':
+        u = 10**26 / pc.c
+    elif units == 'f_lambda':
+        u = 10**26 / pc.c * (wl*pc.um)**2.0
+    elif 'mJy' in units:
+        u = 1.0
+
+    return flux * u
 
 
 def inst_convolution(wl, spectrum, resolution, sampling_res=None, mode='same'):
