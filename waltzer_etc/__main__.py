@@ -1,12 +1,13 @@
 # Copyright (c) 2025 Patricio Cubillos and A. G. Sreejith
 # WALTzER is open-source software under the GPL-2.0 license (see LICENSE)
 
-import sys
-import os
 import argparse
+import os
+import sys
+
 from shiny import run_app
-from .snr_waltzer import waltzer_snr
 from .__init__ import __version__
+from .sample_snr import waltzer_sample
 
 
 def is_csv_file(filename: str) -> str:
@@ -109,7 +110,7 @@ def main():
         run_app(app, reload=reload, launch_browser=True, port=8001, dev_mode=True)
         return
 
-    waltzer_snr(
+    waltzer_sample(
          csv_file=args.input_file,
          output_csv=args.output_file,
          diameter=args.diam,

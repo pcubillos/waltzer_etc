@@ -153,10 +153,10 @@ for sed_type in sed.get_sed_types():
 
 # Higher resolution for models (will be bin down to WALTzER)
 resolution = 45_000.0
-wl = ps.constant_resolution_spectrum(2_400, 20_000, resolution=resolution)
+wl = ps.constant_resolution_spectrum(2_350, 20_000, resolution=resolution)
 wl_micron = wl * pc.A/pc.um
 # WALTzER's resolution
-inst_resolution = 3000.0
+inst_resolution = detectors['vis'].resolution
 cache_seds = {}
 
 def waltz_model(wl_model, depth):
@@ -190,6 +190,7 @@ def load_sed(sed_model, cache_seds):
         )
         cache_seds[sed_model] = sed_flux
     return sed_flux
+
 
 # SED normalization band
 band_name = 'johnson,v'
@@ -1347,7 +1348,7 @@ def server(input, output, session):
             return
 
         if len(bands) == 0:
-            # nothing to calculate
+            # Nothing to calculate
             success = ui.markdown("Please select **at least one** band!")
             ui.notification_show(success, type="warning", duration=5)
             return
@@ -1375,7 +1376,7 @@ def server(input, output, session):
             variances = det.calc_noise(wl, flux)
             total_variance = np.sum(variances, axis=0)
             band_flux = variances[0]
-            # TBD this should mirror snr_waltzer.waltzer_snr() spectra ~850
+            # TBD this should mirror waltzer_sample()'s tso dictionary
             tso[band] = {
                 'wl': det.wl * pc.A / pc.um,
                 'flux': band_flux,

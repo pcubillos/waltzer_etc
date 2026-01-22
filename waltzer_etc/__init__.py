@@ -1,12 +1,15 @@
 # Copyright (c) 2025 Patricio Cubillos and A. G. Sreejith
 # WALTzER is open-source software under the GPL-2.0 license (see LICENSE)
 
+from .sample_snr import *
 from .snr_waltzer import *
+from . import sample_snr
 from . import snr_waltzer
 from .version import __version__
 
 
 __all__ = (
+    sample_snr.__all__ +
     snr_waltzer.__all__
 )
 
