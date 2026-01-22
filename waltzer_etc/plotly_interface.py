@@ -198,11 +198,11 @@ def plotly_sed_spectra(
 
     fig.update_traces(
         hovertemplate=
-            'wl = %{x:.2f}<br>'+
+            'wl = %{x:.3f}<br>'+
             'flux = %{y:.3f}'
     )
     fig.update_yaxes(
-        title_text=f'Flux ({units})',
+        title_text=f'flux ({units})',
         title_standoff=0,
         type=flux_scale,
     )
@@ -213,7 +213,7 @@ def plotly_sed_spectra(
             for wave in wl_range
         ]
     fig.update_xaxes(
-        title_text='wavelength (um)',
+        title_text='wavelength (μm)',
         title_standoff=0,
         range=wl_range,
         type=wl_scale,
@@ -303,7 +303,7 @@ def plotly_depth_spectra(
 
     fig.update_traces(
         hovertemplate=
-            'wl = %{x:.2f}<br>'+
+            'wl = %{x:.3f}<br>'+
             'depth = %{y:.3f}'
     )
     if depth_range[0] is None or depth_range[1] is None:
@@ -327,7 +327,7 @@ def plotly_depth_spectra(
             for wave in wl_range
         ]
     fig.update_xaxes(
-        title_text='wavelength (um)',
+        title_text='wavelength (μm)',
         title_standoff=0,
         range=wl_range,
         type=wl_scale,
@@ -405,7 +405,7 @@ def plotly_variances(
 
     fig.update_traces(
         hovertemplate=
-            'wl = %{x:.2f}<br>'+
+            'wl = %{x:.3f}<br>'+
             'flux = %{y:.3f}'
     )
     fig.update_yaxes(
@@ -419,7 +419,7 @@ def plotly_variances(
         wl_range = np.log10(wl_range)
 
     fig.update_xaxes(
-        title_text='wavelength (um)',
+        title_text='wavelength (μm)',
         title_standoff=0,
         range=wl_range,
         type=wl_scale,
@@ -507,7 +507,7 @@ def plotly_flux_snr(
     )
 
     fig.update_xaxes(
-        title_text='wavelength (um)',
+        title_text='wavelength (μm)',
         title_standoff=0,
         type=wl_scale,
     )
@@ -593,7 +593,7 @@ def plotly_depth_snr(
     )
 
     fig.update_xaxes(
-        title_text='wavelength (um)',
+        title_text='wavelength (μm)',
         title_standoff=0,
         range=wl_range,
         type=wl_scale,
@@ -673,7 +673,7 @@ def plotly_tso_spectra(
 
     fig.update_traces(
         hovertemplate=
-            'wl = %{x:.2f}<br>'+
+            'wl = %{x:.3f}<br>'+
             'depth = %{y:.3f}'
     )
     if depth_range is None:
@@ -695,7 +695,7 @@ def plotly_tso_spectra(
             wl_range[1] = np.log10(wl_range[1])
 
     fig.update_xaxes(
-        title_text='wavelength (um)',
+        title_text='wavelength (μm)',
         title_standoff=0,
         range=wl_range,
         type=wl_scale,

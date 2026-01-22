@@ -77,7 +77,7 @@ def get_throughput():
 
     for i,det_name in enumerate(det_names):
        det = waltz.Detector(det_name)
-       wl = np.linspace(det.wl_min, det.wl_max, nwave) * pc.A / pc.um
+       wl = np.linspace(det.wl_min, det.wl_max, nwave)
        response = np.ones(nwave)
        response[-1] = 0.0
 

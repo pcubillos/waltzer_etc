@@ -153,8 +153,7 @@ for sed_type in sed.get_sed_types():
 
 # Higher resolution for models (will be bin down to WALTzER)
 resolution = 45_000.0
-wl = ps.constant_resolution_spectrum(2_350, 20_000, resolution=resolution)
-wl_micron = wl * pc.A/pc.um
+wl = ps.constant_resolution_spectrum(0.23, 2.0, resolution=resolution)
 # WALTzER's resolution
 inst_resolution = detectors['vis'].resolution
 cache_seds = {}
@@ -165,14 +164,14 @@ def waltz_model(wl_model, depth):
     """
     # interpolate
     interp_depth = np.interp(
-        wl_micron, wl_model, depth, left=np.nan, right=np.nan,
+        wl, wl_model, depth, left=np.nan, right=np.nan,
     )
     waltzer_depth = inst_convolution(
-        wl_micron, interp_depth, inst_resolution, sampling_res=resolution,
+        wl, interp_depth, inst_resolution, sampling_res=resolution,
         mode='valid',
     )
-    edge = (wl_micron.size - waltzer_depth.size) // 2
-    waltzer_wl = wl_micron[edge:-edge]
+    edge = (wl.size - waltzer_depth.size) // 2
+    waltzer_wl = wl[edge:-edge]
     return waltzer_wl, waltzer_depth
 
 
@@ -446,7 +445,7 @@ app_ui = ui.page_fluid(
                     id='target',
                     label='',
                     choices=[target.planet for target in catalog.targets],
-                    selected='WASP-80 b',
+                    selected='HD 209458 b',
                     multiple=False,
                 ),
                 # Target props
@@ -520,7 +519,7 @@ app_ui = ui.page_fluid(
                         id="sed_type",
                         label='',
                         choices={
-                            "waltzer": "waltzer",
+                            "llmodels": "llmodels",
                             "phoenix": "phoenix",
                             "k93models": "kurucz (k93models)",
                             "bt_settl": "BT-Settl MLT (bt_settl)",
@@ -533,7 +532,7 @@ app_ui = ui.page_fluid(
                 ui.input_select(
                     id="sed",
                     label="",
-                    choices=sed_dict['waltzer'],
+                    choices=sed_dict['llmodels'],
                     selected='g0v',
                 ),
                 class_="px-2 pt-2 pb-0 m-0",
@@ -1361,7 +1360,7 @@ def server(input, output, session):
             sed_flux = load_sed(sed_model, cache_seds)
             flux = sed.normalize_vega(wl, sed_flux, norm_mag)
             spectra['sed'][sed_label] = {
-                'wl': wl_micron, 'flux': flux, 'filename':None,
+                'wl': wl, 'flux': flux, 'filename':None,
             }
             bookmarked_spectra['sed'].append(sed_label)
             bookmarked_sed.set(True)
@@ -1378,14 +1377,14 @@ def server(input, output, session):
             band_flux = variances[0]
             # TBD this should mirror waltzer_sample()'s tso dictionary
             tso[band] = {
-                'wl': det.wl * pc.A / pc.um,
+                'wl': det.wl,
                 'flux': band_flux,
                 'variance': total_variance,
                 'variances': variances,
                 'det_type': det.mode,
-                'half_widths': det.half_widths * pc.A / pc.um,
-                'wl_min': det.wl_min * pc.A / pc.um,
-                'wl_max': det.wl_max * pc.A / pc.um,
+                'half_widths': det.half_widths,
+                'wl_min': det.wl_min,
+                'wl_max': det.wl_max,
             }
 
         tso_label = make_tso_label(input)
@@ -1920,7 +1919,7 @@ def server(input, output, session):
             flux = sed.normalize_vega(wl, sed_flux, norm_mag)
 
             spectra['sed'][sed_label] = {
-                'wl': wl_micron, 'flux': flux, 'filename':None,
+                'wl': wl, 'flux': flux, 'filename':None,
             }
             bookmarked_spectra['sed'].append(sed_label)
         else:
@@ -2227,7 +2226,7 @@ def server(input, output, session):
         for model_name in model_names:
             model = dict(spectra['sed'][model_name])
             plot_model = dict(
-                flux=model['flux'] * 1e15,
+                flux=model['flux'],
                 wl=model['wl'],
             )
             sed_models.append(plot_model)
@@ -2236,7 +2235,7 @@ def server(input, output, session):
         wl_scale = input.plot_sed_xscale.get()
         flux_scale = input.plot_sed_yscale.get()
         wl_range = [input.sed_wl_min.get(), input.sed_wl_max.get()]
-        units = '10<sup>-15</sup> erg s<sup>-1</sup> cm<sup>-2</sup> A<sup>-1</sup>'
+        units = 'mJy'
 
         resolution = input.plot_sed_resolution.get()
 
