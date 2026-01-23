@@ -290,6 +290,15 @@ layout_kwargs = dict(
     class_="pb-2 pt-0 m-0",
 )
 
+welcome = f"""This is the WALTzER ETC, version **{waltz.__version__}**
+
+To update, cd into the `waltzer_etc/` folder containing `pyproject.toml`, and then run these commands:
+```shell
+git pull origin main
+pip install -e .
+```
+"""
+
 
 app_ui = ui.page_fluid(
     # ESA Sky
@@ -850,11 +859,16 @@ app_ui = ui.page_fluid(
                             selected='variance',
                         ),
                         'Resolution:',
-                        ui.input_numeric(
-                            id='noise_resolution',
-                            label='',
-                            value=0.0,
-                            min=0.0, max=6000.0, step=50.0,
+                        ui.tooltip(
+                            ui.input_numeric(
+                                id='noise_resolution',
+                                label='',
+                                value=0.0,
+                                min=0.0, max=6000.0, step=50.0,
+                            ),
+                            "True resolution = 6000",
+                            id='noise_resolution_tooltip',
+                            placement='bottom',
                         ),
                         "Wavelength:",
                         ui.input_select(
@@ -865,7 +879,7 @@ app_ui = ui.page_fluid(
                         ),
                         width=1/2,
                         fixed_width=False,
-                        gap='5px',
+                        gap='0px',
                         fill=False,
                         fillable=True,
                         class_="p-0 pb-1 m-0",
@@ -884,15 +898,20 @@ app_ui = ui.page_fluid(
                             selected='tso',
                         ),
                         'Resolution:',
-                        ui.input_numeric(
-                            id='tso_resolution',
-                            label='',
-                            value=250.0,
-                            min=0.0, max=3000.0, step=25.0,
+                        ui.tooltip(
+                            ui.input_numeric(
+                                id="tso_resolution",
+                                label="",
+                                value=250.0,
+                                min=0.0, max=3000.0, step=25.0,
+                            ),
+                            "True resolution = 6000",
+                            id='tso_resolution_tooltip',
+                            placement="bottom",
                         ),
                         width=1/2,
                         fixed_width=False,
-                        gap='5px',
+                        gap='0px',
                         fill=False,
                         fillable=True,
                         class_="px-0 pb-1 m-0",
@@ -1123,6 +1142,7 @@ app_ui = ui.page_fluid(
 # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 def server(input, output, session):
+    actual_resolution = reactive.Value(6000)
     bookmarked_sed = reactive.Value(False)
     bookmarked_depth = reactive.Value(False)
     saturation_label = reactive.Value(None)
@@ -1167,29 +1187,21 @@ def server(input, output, session):
         github_url = "https://github.com/pcubillos/waltzer_etc"
 
         m = ui.modal(
-            #ui.markdown(
-            #    'If you see anything in <span style="color:red">red</span>, '
-            #    'click the button to update or follow the instructions.<br>'
-            #    'If you see <span style="color:#ffa500">orange</span>, '
-            #    "you are encouraged to upgrade, but no stress.<br>"
-            #    'If you see <span style="color:#0B980D">green</span>, you '
-            #    'are good to go modeling JWST observations.'
-            #),
             ui.hr(),
             ui.layout_columns(
-                ui.markdown(f"This is the WALTzER ETC, version **{waltz_ver}**"),
+                ui.markdown(welcome),
                 ui.span(
+                    ui.HTML('The Github repository is located here: '),
                     ui.tags.a(
                         fa.icon_svg("github", fill='black'),
                         href=github_url,
                         target="_blank",
                     ),
-                    ui.HTML(' Github repository is located here: '),
                     ui.tags.a(github_url, href=github_url, target="_blank"),
                 ),
-                # Trexolists
+                ui.hr(),
+                # JWST and NASA databases:
                 ui.HTML(f'JWST database last updated: {last_trexo}'),
-                # NASA Archive
                 ui.HTML(f"NASA exoplanets database last updated: {last_nasa}"),
                 # SEDs
                 #ui.input_task_button(
@@ -1204,7 +1216,7 @@ def server(input, output, session):
                 class_="px-0 py-0 mx-0 my-0",
             ),
             ui.hr(),
-            title=ui.markdown("**WALTzER specs**"),
+            title=ui.markdown("**WALTzER ETC**"),
             easy_close=True,
             size='l',
         )
@@ -2212,6 +2224,15 @@ def server(input, output, session):
             update_sed_flag.set(label)
 
 
+    @reactive.effect
+    @reactive.event(actual_resolution)
+    def acquisition_targets():
+        resolution = actual_resolution.get()
+        tip = f'True resolution = {resolution}'
+        ui.update_tooltip('noise_resolution_tooltip', tip)
+        ui.update_tooltip('tso_resolution_tooltip', tip)
+
+
     # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
     # Viewers
     @render_plotly
@@ -2307,9 +2328,11 @@ def server(input, output, session):
 
         if resolution == 0.0:
             binsize = 1
+            actual_resolution.set(6000.0)
         else:
             idx = searchsorted_closest(resolutions, resolution)
             binsize = bins[idx]
+            actual_resolution.set(f'{resolutions[idx]:.1f}')
 
         if plot_type == 'variance':
             head = 'wl(um)  source(e/s)  sky(e/s)  dark(e/s)  read_noise(e/s)  wl_half_width(um)'
@@ -2387,9 +2410,11 @@ def server(input, output, session):
 
         if resolution == 0.0:
             binsize = 1
+            actual_resolution.set(6000.0)
         else:
             idx = searchsorted_closest(resolutions, resolution)
             binsize = bins[idx]
+            actual_resolution.set(f'{resolutions[idx]:.1f}')
 
         # Transit-depth model at WALTzER resolving power
         depth_label, wl, depth = read_depth_spectrum(input, spectra)
