@@ -110,6 +110,9 @@ def get_auto_sed(input):
     """
     sed_type = input.sed_type()
     sed_models = sed_dict[sed_type]
+    # Avoid breaking if the SED models are not there.
+    if len(sed_models) == 0:
+        return sed_models, ''
 
     try:
         t_eff = _safe_num(input.t_eff.get(), default=1400.0, cast=float)
