@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Patricio Cubillos and A. G. Sreejith
+# Copyright (c) 2025-2026 Patricio Cubillos and A. G. Sreejith
 # WALTzER is open-source software under the GPL-2.0 license (see LICENSE)
 
 from itertools import groupby
