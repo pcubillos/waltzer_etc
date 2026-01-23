@@ -28,14 +28,26 @@ from waltzer_etc.utils import ROOT
 from waltzer_etc.target import Target
 
 
-# Catalog of stellar SEDs:
-sed_dict = {}
-for sed_type in sed.get_sed_types():
-    sed_keys, sed_models = sed.get_sed_list()
-    sed_dict[sed_type] = {
-        key: model
-        for key,model in zip(sed_keys, sed_models)
-    }
+
+def make_sed_catalog():
+    sed_dict = {}
+    sed_labels = {}
+    for sed_type in sed.get_sed_types():
+        sed_labels[sed_type] = {}
+        sed_keys, sed_models, sed_teff, sed_logg = sed.get_sed_list(sed_type)
+        for i in range(len(sed_keys)):
+            spectral_type = sed_models[i].split()[0]
+            key = f'{sed_type}_{spectral_type}_{sed_teff[i]:.0f}K'
+            sed_labels[sed_type][key] = str(sed_models[i])
+            sed_dict[key] = {
+                'teff': sed_teff[i],
+                'logg': sed_logg[i],
+                'label': sed_models[i],
+                'sed_type': sed_type,
+            }
+    return sed_dict, sed_labels
+
+sed_catalog, sed_dict = make_sed_catalog()
 
 
 bands_dict = {
@@ -103,8 +115,10 @@ def get_auto_sed(input):
         t_eff = _safe_num(input.t_eff.get(), default=1400.0, cast=float)
     except ValueError:
         return sed_models, None
-    chosen_sed, temp = sed.find_closest_teff(t_eff)
-    return sed_models, chosen_sed
+    logg = _safe_num(input.log_g.get(), default=4.5, cast=float)
+    sed_file, label, temp, log_g = sed.find_closest_sed(t_eff, logg, sed_type)
+    selected_sed = next(k for k, val in sed_models.items() if val == label)
+    return sed_models, selected_sed
 
 
 def planet_model_name(input):
@@ -180,23 +194,12 @@ def make_tso_label(input):
     bands = input.bands.get()
     band_names = ' + '.join(bands)
 
-    #sed_type = input.sed_type()
-    norm_band = 'johnson,v'
-    norm_magnitude = _safe_num(input.magnitude.get(), default=10.0, cast=float)
-    band_name = bands_dict[norm_band].split()[0]
-    sed_model = input.sed.get()
-
-    ini = sed_model.index('t') + 1
-    end = sed_model.index('g')
-    teff = int(sed_model[ini:end])
-
-    sed_label = f'Teff={teff}K {band_name}={norm_magnitude:.2f}'
-
+    sed_type, sed_model, norm_mag, sed_label = parse_sed(input)
     label = f'{name} / {sed_label} / {band_names}'
     return label
 
 
-def parse_sed(input, spectra):
+def parse_sed(input, spectra=None):
     """Extract SED parameters"""
     sed_type = input.sed_type()
     norm_band = 'johnson,v'
@@ -205,16 +208,17 @@ def parse_sed(input, spectra):
     if sed_type in sed_dict:
         sed_model = input.sed.get()
         if sed_model not in sed_dict[sed_type]:
-            return None, None, None, None, None
-        model_label = f'{sed_type}_{sed_model}'
+            return None, None, None, None
+        model_label = sed_model
+
     elif sed_type == 'blackbody':
         sed_model = _safe_num(input.t_eff.get(), default=1400.0, cast=float)
         model_label = f'bb_{sed_model:.0f}K'
+
     elif sed_type == 'input':
         model_label = input.sed.get()
         if model_label not in spectra['sed']:
-            return None, None, None, None, None
-        sed_model = spectra['sed'][model_label]
+            return None, None, None, None
 
     # Make a label
     band_name = bands_dict[norm_band].split()[0]

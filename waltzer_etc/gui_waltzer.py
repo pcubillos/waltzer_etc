@@ -23,8 +23,8 @@ from waltzer_etc.utils import ROOT as ROOT
 from waltzer_etc.utils import inst_convolution
 import waltzer_etc as waltz
 import waltzer_etc.sed as sed
-# TBD waltzer.app_utils
-from app_utils import (
+from gui_utils import (
+    make_sed_catalog,
     get_throughput,
     get_auto_sed,
     planet_model_name,
@@ -43,7 +43,7 @@ from app_utils import (
     fetch_gaia_targets,
 )
 # TBD proper import local file
-from viewer_popovers import (
+from gui_popovers import (
     depth_units,
     wl_scales,
     flux_scales,
@@ -51,7 +51,7 @@ from viewer_popovers import (
     tso_choices,
 )
 
-import plotly_interface as plt
+import gui_plotly as plt
 
 bins = np.arange(6000, 0, -1)
 resolutions = 6000.0 / bins
@@ -102,7 +102,7 @@ def quick_snr(tso, t_in, t_out=None, depth=0.0):
         t_error.append(transit_depth_error/pc.ppm)
 
         # Time-integrated SNR on the stellar flux
-        signal = flux_in*t_in + flux_out*t_out 
+        signal = flux_in*t_in + flux_out*t_out
         snr.append(signal/np.sqrt(var_out))
 
     return snr, t_error
@@ -142,13 +142,15 @@ catalog, is_jwst, is_transit, is_confirmed = load_catalog()
 nplanets = len(catalog.targets)
 
 # Catalog of stellar SEDs:
-sed_dict = {}
-for sed_type in sed.get_sed_types():
-    sed_keys, sed_models = sed.get_sed_list()
-    sed_dict[sed_type] = {
-        key: model
-        for key,model in zip(sed_keys, sed_models)
-    }
+sed_choices = {
+    "llmodels": "llmodels",
+    "phoenix": "phoenix",
+    #"k93models": "kurucz (k93models)",
+    "bt_settl": "BT-Settl MLT (bt_settl)",
+    #"blackbody": "blackbody",
+    "input": "input",
+}
+sed_catalog, sed_dict = make_sed_catalog()
 
 
 # Higher resolution for models (will be bin down to WALTzER)
@@ -157,6 +159,7 @@ wl = ps.constant_resolution_spectrum(0.23, 2.0, resolution=resolution)
 # WALTzER's resolution
 inst_resolution = detectors['vis'].resolution
 cache_seds = {}
+
 
 def waltz_model(wl_model, depth):
     """
@@ -175,6 +178,7 @@ def waltz_model(wl_model, depth):
     return waltzer_wl, waltzer_depth
 
 
+
 def load_sed(sed_model, cache_seds):
     """
     load SED wrapper with cache'd files.
@@ -182,7 +186,10 @@ def load_sed(sed_model, cache_seds):
     if sed_model in cache_seds:
         sed_flux = cache_seds[sed_model]
     else:
-        sed_wl, flux = sed.load_sed_llmodels(file=sed_model)
+        teff = sed_catalog[sed_model]['teff']
+        logg = sed_catalog[sed_model]['logg']
+        sed_type = sed_catalog[sed_model]['sed_type']
+        sed_wl, flux = sed.load_sed(teff, logg, sed_type)
         flux = np.interp(wl, sed_wl, flux)
         sed_flux = inst_convolution(
             wl, flux, inst_resolution, sampling_res=resolution,
@@ -448,7 +455,7 @@ app_ui = ui.page_fluid(
                     selected='HD 209458 b',
                     multiple=False,
                 ),
-                # Target props
+                # SED properties
                 ui.layout_column_wrap(
                     # Row 1
                     ui.HTML("<p>T<sub>eff</sub> (K):</p>"),
@@ -513,27 +520,16 @@ app_ui = ui.page_fluid(
                         ),
                     ),
                 ),
-                ui.panel_conditional(
-                    "input.is_candidate",
-                    ui.input_select(
-                        id="sed_type",
-                        label='',
-                        choices={
-                            "llmodels": "llmodels",
-                            "phoenix": "phoenix",
-                            "k93models": "kurucz (k93models)",
-                            "bt_settl": "BT-Settl MLT (bt_settl)",
-                            "blackbody": "blackbody",
-                            "input": "input",
-                        },
-                        selected=list(sed_dict)[0],
-                    ),
+                ui.input_select(
+                    id="sed_type",
+                    label='',
+                    choices=sed_choices,
+                    selected=list(sed_choices)[0],
                 ),
                 ui.input_select(
                     id="sed",
                     label="",
-                    choices=sed_dict['llmodels'],
-                    selected='g0v',
+                    choices=sed_dict[list(sed_choices)[0]],
                 ),
                 class_="px-2 pt-2 pb-0 m-0",
             ),
@@ -764,7 +760,7 @@ app_ui = ui.page_fluid(
                         fillable=True,
                         class_="p-0 pb-1 m-0",
 
-                    ),      
+                    ),
                     "Wavelength:",
                     ui.layout_column_wrap(
                         ui.input_numeric(
@@ -788,7 +784,7 @@ app_ui = ui.page_fluid(
                         fill=False,
                         fillable=True,
                         class_="p-0 pb-2 m-0",
-                    ),      
+                    ),
                     class_="p-0 m-0",
                 ),
 

@@ -128,12 +128,15 @@ def waltzer_sample(
         target = planet_names[i]
         # Load SED model spectrum based on temperature
         teff = stellar_temps[i]
-        sed_file, teff_match = sed.find_closest_teff(teff)
+        logg = 4.5
+        # TBD: sed_type hardcoded for now
+        sed_type = 'llmodels'
+        sed_file, sed_label, teff_match, logg_match = sed.find_closest_sed(teff, logg, sed_type)
         if sed_file in cache_seds:
             sed_flux = cache_seds[sed_file]
         else:
             # Load SED flux
-            sed_wl, flux = sed.load_sed_llmodels(file=sed_file)
+            sed_wl, flux = sed.load_sed(teff_match, logg_match, sed_type)
             # Interpolate to regular grid and apply waltzer resolution
             flux = np.interp(wl, sed_wl, flux)
             sed_flux = inst_convolution(
