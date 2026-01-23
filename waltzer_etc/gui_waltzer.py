@@ -179,17 +179,22 @@ def waltz_model(wl_model, depth):
 
 
 
-def load_sed(sed_model, cache_seds):
+def load_sed(sed_model, sed_type, cache_seds):
     """
     load SED wrapper with cache'd files.
     """
     if sed_model in cache_seds:
         sed_flux = cache_seds[sed_model]
     else:
-        teff = sed_catalog[sed_model]['teff']
-        logg = sed_catalog[sed_model]['logg']
-        sed_type = sed_catalog[sed_model]['sed_type']
-        sed_wl, flux = sed.load_sed(teff, logg, sed_type)
+        if sed_type == 'input':
+            sed_wl = spectra['sed'][sed_model]['wl']
+            flux = spectra['sed'][sed_model]['flux']
+        else:
+            teff = sed_catalog[sed_model]['teff']
+            logg = sed_catalog[sed_model]['logg']
+            sed_type = sed_catalog[sed_model]['sed_type']
+            sed_wl, flux = sed.load_sed(teff, logg, sed_type)
+
         flux = np.interp(wl, sed_wl, flux)
         sed_flux = inst_convolution(
             wl, flux, inst_resolution, sampling_res=resolution,
@@ -480,19 +485,15 @@ app_ui = ui.page_fluid(
                 ui.span(
                     ui.HTML('<b>Stellar SED</b> '),
                     # upload (hidden for now)
-                    ui.panel_conditional(
-                        'false',
-                        ui.tooltip(
-                            ui.input_action_link(
-                                id='upload_sed',
-                                label='',
-                                icon=fa.icon_svg("file-arrow-up", fill='black'),
-                            ),
-                            'Upload SED',
-                            id='sed_up_tooltip',
-                            placement='top',
+                    ui.tooltip(
+                        ui.input_action_link(
+                            id='upload_sed',
+                            label='',
+                            icon=fa.icon_svg("file-arrow-up", fill='black'),
                         ),
-                        class_="p-0 m-0",
+                        'Upload SED',
+                        id='sed_up_tooltip',
+                        placement='top',
                     ),
                     # bookmarks
                     ui.tooltip(
@@ -1353,7 +1354,7 @@ def server(input, output, session):
         if sed_label in bookmarked_spectra['sed']:
             flux = spectra['sed'][sed_label]['flux']
         else:
-            sed_flux = load_sed(sed_model, cache_seds)
+            sed_flux = load_sed(sed_model, sed_type, cache_seds)
             flux = sed.normalize_vega(wl, sed_flux, norm_mag)
             spectra['sed'][sed_label] = {
                 'wl': wl, 'flux': flux, 'filename':None,
@@ -1383,7 +1384,7 @@ def server(input, output, session):
                 'wl_max': det.wl_max,
             }
 
-        tso_label = make_tso_label(input)
+        tso_label = make_tso_label(input, spectra)
 
         tso['meta'] = {
             'bands': bands,
@@ -1910,7 +1911,7 @@ def server(input, output, session):
         is_bookmarked = not bookmarked_sed.get()
         bookmarked_sed.set(is_bookmarked)
         if is_bookmarked:
-            sed_flux = load_sed(sed_model, cache_seds)
+            sed_flux = load_sed(sed_model, sed_type, cache_seds)
             # Normalize according to Vmag
             flux = sed.normalize_vega(wl, sed_flux, norm_mag)
 
@@ -2094,6 +2095,13 @@ def server(input, output, session):
                 "the input units are correct before uploading a file!**"
             ),
             ui.input_radio_buttons(
+                id="upload_wl_units",
+                label='Wavelength units:',
+                choices=wl_units,
+                selected='micron',
+                width='100%',
+            ),
+            ui.input_radio_buttons(
                 id="upload_units",
                 label='Flux units:',
                 choices=sed_units,
@@ -2127,6 +2135,7 @@ def server(input, output, session):
                 id="upload_wl_units",
                 label='Wavelength units:',
                 choices=wl_units,
+                selected='micron',
                 width='100%',
             ),
             ui.input_radio_buttons(
@@ -2164,8 +2173,13 @@ def server(input, output, session):
         # The units tell this function SED or depth spectrum:
         filename = new_model[0]['name']
         filepath = new_model[0]['datapath']
+
+        wl_units = input.upload_wl_units.get()
         units = uploaded_units.get()
-        _, wl, model = read_spectrum_file(filepath, units, on_fail='warning')
+
+        _, wl, model = read_spectrum_file(
+            filepath, units, wl_units, on_fail='warning',
+        )
         if wl is None:
             msg = ui.markdown(
                 f'**Error:**<br>Invalid format for input file:<br>*{filename}*'
@@ -2174,16 +2188,13 @@ def server(input, output, session):
             return
         label = os.path.splitext(filename)[0]
 
-        if input.upload_wl_units.get() == 'angstrom':
-            wl *= pc.A / pc.um
-
         if units in depth_units:
             obs_geometry = input.obs_geometry.get()
             spectra[obs_geometry][label] = {
                 'wl': wl,
                 'depth': model,
                 'units': units,
-                'filename': f'unknown_{filename}',
+                'filename': f'input_{filename}',
             }
             if label not in bookmarked_spectra[obs_geometry]:
                 bookmarked_spectra[obs_geometry].append(label)
@@ -2196,7 +2207,7 @@ def server(input, output, session):
                 'wl': wl,
                 'flux': model,
                 'units': units,
-                'filename': f'unknown_{filename}',
+                'filename': f'input_{filename}',
             }
             update_sed_flag.set(label)
 

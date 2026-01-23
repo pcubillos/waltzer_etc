@@ -191,13 +191,13 @@ def parse_obs(input):
     return planet_model_type, depth_model, rprs_sq, teq_planet
 
 
-def make_tso_label(input):
+def make_tso_label(input, spectra):
     """Extract SED parameters"""
     name = input.target.get()
     bands = input.bands.get()
     band_names = ' + '.join(bands)
 
-    sed_type, sed_model, norm_mag, sed_label = parse_sed(input)
+    sed_type, sed_model, norm_mag, sed_label = parse_sed(input, spectra)
     label = f'{name} / {sed_label} / {band_names}'
     return label
 
@@ -212,26 +212,25 @@ def parse_sed(input, spectra=None):
         sed_model = input.sed.get()
         if sed_model not in sed_dict[sed_type]:
             return None, None, None, None
-        model_label = sed_model
 
     elif sed_type == 'blackbody':
         sed_model = _safe_num(input.t_eff.get(), default=1400.0, cast=float)
-        model_label = f'bb_{sed_model:.0f}K'
+        sed_model = f'bb_{sed_model:.0f}K'
 
     elif sed_type == 'input':
-        model_label = input.sed.get()
-        if model_label not in spectra['sed']:
+        sed_model = input.sed.get()
+        if sed_model not in spectra['sed']:
             return None, None, None, None
 
     # Make a label
     band_name = bands_dict[norm_band].split()[0]
     band_label = f'{norm_magnitude:.2f}_{band_name}'
-    sed_label = f'{model_label}_{band_label}'
+    sed_label = f'{sed_model}_{band_label}'
 
     return sed_type, sed_model, norm_magnitude, sed_label
 
 
-def read_spectrum_file(file, units='none', on_fail=None):
+def read_spectrum_file(file, units='none', wl_units='micron', on_fail=None):
     """
     Parameters
     ----------
@@ -248,6 +247,8 @@ def read_spectrum_file(file, units='none', on_fail=None):
             'f_freq' (for erg s-1 cm-2 Hz-1),
             'f_nu' (for for erg s-1 cm-2 cm),
             'f_lambda' (for erg s-1 cm-2 cm-1)
+    wl_units:
+        Units of the input wavelength. Use one of 'micron' or 'angstrom'.
     on_fail: String
         if 'warning' raise a warning.
         if 'error' raise an error.
@@ -290,6 +291,10 @@ def read_spectrum_file(file, units='none', on_fail=None):
         if on_fail == 'error':
             raise ValueError(error_msg)
         return None, None, None
+
+    # Set the units:
+    if wl_units == 'angstrom':
+        wl *= pc.A / pc.um
 
     # Set the units:
     if units in depth_units:
