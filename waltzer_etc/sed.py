@@ -4,23 +4,42 @@
 __all__ = [
     'normalize_vega',
     'get_sed_list',
-    'find_closest_teff',
+    'find_closest_sed',
+    'load_sed',
     'load_sed_llmodels',
-    #'load_sed',
+    'load_sed_phoenix',
 ]
 
 import os
-import re
 
 import astropy.units as u
 import numpy as np
 import pyratbay.constants as pc
 import synphot as syn
 import synphot.units as su
+from synphot.spectrum import SourceSpectrum
 from synphot.models import Empirical1D
 from .utils import ROOT, to_mJy
 
-base_dir = f'{ROOT}/data/models/'
+base_dir = f'{ROOT}data/models/'
+sed_base_dir = f'{ROOT}data/'
+
+
+def _get_sed_list(sed_type):
+    """
+    sed_type = 'llmodels'
+    """
+    if sed_type == 'llmodels':
+        sed_type = 'models'
+    sed_file = f'{sed_base_dir}{sed_type}/sed_files.txt'
+
+    data = np.loadtxt(sed_file, dtype=str, delimiter=',', unpack=True)
+    labels = data[0]
+    teff = np.array(data[1], dtype=float)
+    logg = np.array(data[2], dtype=float)
+    files = data[3]
+    isort = np.flip(np.argsort(teff))
+    return files[isort], labels[isort], teff[isort], logg[isort]
 
 
 def get_sed_types():
@@ -31,12 +50,17 @@ def get_sed_types():
     -------
     instruments: 1D list of strings
         JWST instruments
+
+    Examples
+    --------
+    >>> import waltzer_etc.sed as sed
+    >>> sed.get_sed_types()
     """
     return [
         'llmodels',
-        #'phoenix',
+        'phoenix',
         #'k93models',
-        #'bt_settl',
+        'bt_settl',
     ]
 
 def load_vega():
@@ -92,24 +116,32 @@ def normalize_vega(wl, flux, v_mag):
     return norm_flux
 
 
-def get_sed_list():
+def get_sed_list(sed_type='llmodels'):
     """
-    Get all LLMODELS SEDs
+    Get all SED models for a given library.
+
+    Examples
+    --------
+    >>> import waltzer_etc.sed as sed
+    >>> files, labels, teff, logg = sed.get_sed_list('llmodels')
+    >>> files, labels, teff, logg = sed.get_sed_list('bt_settl')
+    >>> files, labels, teff, logg = sed.get_sed_list('phoenix')
+
+    print(labels)
     """
-    temp_pattern = re.compile(r't(\d+)g[\d\.]+', re.IGNORECASE)
-    files = sorted([
-        file
-        for file in os.listdir(base_dir)
-        if temp_pattern.search(file)
-    ])
-    labels = [
-        f'T={int(file[1:6])}K log(g)={file[7:10]}'
-        for file in files
-    ]
-    return files, labels
+    files, labels, teff, logg = _get_sed_list(sed_type)
+
+    if sed_type == 'llmodels':
+        sed_type = 'models'
+    sed_folder = f'{sed_base_dir}{sed_type}'
+
+    sed_files = np.array([os.path.join(sed_folder, file) for file in files])
+    mask = [os.path.exists(file) for file in sed_files]
+
+    return sed_files[mask], labels[mask], teff[mask], logg[mask]
 
 
-def find_closest_teff(teff):
+def find_closest_sed(teff, logg, sed_type):
     """
     Find folder in base_dir with closest temperature to teff.
 
@@ -117,18 +149,53 @@ def find_closest_teff(teff):
     --------
     >>> import waltzer_etc.sed as sed
     >>> teff = 8000.0
-    >>> file, temp = sed.find_closest_teff(8000.0)
+    >>> file, temp = sed.find_closest_sed(8000.0, 4.5, 'llmodels')
     """
-    files, labels = get_sed_list()
+    files, labels, grid_teff, grid_logg = get_sed_list(sed_type)
 
-    temps = [
-        file[1+file.index('t'):file.index('g')]
-        for file in files
-    ]
-    temps = np.array(temps, float)
+    # A cost function for [teff,log_g] space
+    cost = (
+        np.abs(np.log10(teff/grid_teff)) +
+        np.abs(logg-grid_logg) / 15.0
+    )
+    idx = np.argmin(cost)
+    return files[idx], labels[idx], grid_teff[idx], grid_logg[idx]
 
-    i = np.argmin(np.abs(temps - teff))
-    return files[i], temps[i]
+
+def load_sed(teff=None, logg=4.5, sed_type='llmodels'):
+    """
+    Load the SED model that matches the T_eff and log_g the best.
+
+    Parameters
+    ----------
+    teff: Float
+        SED effective temperature (K).
+    logg: Float
+        SED log(g).
+
+    Returns
+    -------
+    wl: 1D float array
+        SED wavelength array (microns).
+    flux: 1D float array
+        SED spectrum array (mJy).
+
+    Examples
+    --------
+    >>> import waltzer_etc.sed as sed
+    >>> sed_wl, sed_flux = sed.load_sed(6050.0, sed_type='llmodels')
+    >>> sed_wl, sed_flux = sed.load_sed(6050.0, sed_type='phoenix')
+    >>> sed_wl, sed_flux = sed.load_sed(2080.0, sed_type='bt_settl')
+    """
+    # Search best match:
+    file, label, teff_match, logg_match = find_closest_sed(teff, logg, sed_type=sed_type)
+
+    if sed_type == 'llmodels':
+        return load_sed_llmodels(file=file)
+    if sed_type == 'bt_settl':
+        return load_sed_phoenix(file=file)
+    if sed_type == 'phoenix':
+        return load_sed_phoenix(file=file, logg=logg_match)
 
 
 def load_sed_llmodels(teff=None, file=None):
@@ -157,11 +224,11 @@ def load_sed_llmodels(teff=None, file=None):
         raise ValueError('one of teff or file input arguments must be set')
 
     if teff is not None:
-        file, teff_match = find_closest_teff(teff)
+        logg = 4.5
+        file, label, teff_match, logg = find_closest_sed(teff, logg, sed_type='llmodels')
 
     # Load SED flux
-    path_file = os.path.join(base_dir, file)
-    spectrum = np.loadtxt(path_file, unpack=True)
+    spectrum = np.loadtxt(file, unpack=True)
     wl, flux = spectrum[0:2]
 
     # Convert wavelength from angstrom to microns
@@ -170,6 +237,22 @@ def load_sed_llmodels(teff=None, file=None):
     # Convert flux to (erg s-1 cm-2 Hz-1) and then to mJy
     flux *= 4*np.pi
     flux = to_mJy(flux, wl, 'f_freq')
-    # TBD: check I'm not missing a factor of A**2 or 1/A**2
 
     return wl, flux
+
+
+def load_sed_phoenix(file, logg=None):
+    """
+    Doc me.
+    """
+    if logg is None:
+        sp = SourceSpectrum.from_file(file)
+    else:
+        flux_col = f'g{int(10*logg):02d}'
+        sp = SourceSpectrum.from_file(file, flux_col=flux_col)
+
+    wl = sp.waveset.to('micron').value
+    flux = sp(sp.waveset, flux_unit=u.mJy).value
+
+    return wl, flux
+
