@@ -863,33 +863,42 @@ app_ui = ui.page_fluid(
                     ),
 
                     ui.panel_conditional(
-                        "input.tab === 'Noise'",
+                        "input.tab === 'Noise' || input.tab === 'TSO'",
                         ui.layout_column_wrap(
                             "Display:",
-                            ui.input_select(
-                                id="noise_plot",
-                                label="",
-                                choices=noise_choices,
-                                selected='variance',
+                            ui.div(
+                                ui.panel_conditional(
+                                    "input.tab === 'Noise'",
+                                    ui.input_select(
+                                        id="noise_plot",
+                                        label="",
+                                        choices=noise_choices,
+                                        selected='variance',
+                                    ),
+                                    class_="px-0 py-0 m-0",
+                                ),
+                                ui.panel_conditional(
+                                    "input.tab === 'TSO'",
+                                    ui.input_select(
+                                        id="tso_plot",
+                                        label="",
+                                        choices=tso_choices,
+                                        selected='tso',
+                                    ),
+                                    class_="px-0 py-0 m-0",
+                                ),
                             ),
                             'Resolution:',
                             ui.tooltip(
                                 ui.input_numeric(
-                                    id='noise_resolution',
+                                    id='tso_resolution',
                                     label='',
                                     value=0.0,
                                     min=0.0, max=6000.0, step=50.0,
                                 ),
                                 "True resolution = 6000",
-                                id='noise_resolution_tooltip',
+                                id='tso_resolution_tooltip',
                                 placement='bottom',
-                            ),
-                            "Wavelength:",
-                            ui.input_select(
-                                "noise_wl_scale",
-                                label="",
-                                choices=wl_scales,
-                                selected='log',
                             ),
                             width=1/2,
                             fixed_width=False,
@@ -898,87 +907,81 @@ app_ui = ui.page_fluid(
                             fillable=True,
                             class_="p-0 pb-1 m-0",
                         ),
+
+                        ui.panel_conditional(
+                            "input.tab === 'Noise'",
+                            ui.layout_column_wrap(
+                                "Wavelength:",
+                                ui.input_select(
+                                    "noise_wl_scale",
+                                    label="",
+                                    choices=wl_scales,
+                                    selected='log',
+                                ),
+                                width=1/2,
+                                fixed_width=False,
+                                gap='0px',
+                                fill=False,
+                                fillable=True,
+                                class_="p-0 m-0",
+                            ),
+                            class_="p-0 m-0",
+                        ),
+                        ui.panel_conditional(
+                            "input.tab === 'TSO'",
+                            "Wavelength:",
+                            ui.layout_column_wrap(
+                                ui.input_numeric(
+                                    id='tso_wl_min', label='',
+                                    value=None, min=0.2, max=30.0, step=0.02,
+                                ),
+                                ui.input_numeric(
+                                    id='tso_wl_max', label='',
+                                    value=None, min=0.2, max=30.0, step=0.1,
+                                ),
+                                ui.input_select(
+                                    id="tso_wl_scale",
+                                    label='',
+                                    choices=wl_scales,
+                                    selected='linear',
+                                ),
+                                width=1/3,
+                                fixed_width=False,
+                                gap='5px',
+                                fill=False,
+                                fillable=True,
+                                class_="p-0 pb-1 m-0",
+                            ),
+                            "Depth:",
+                            ui.layout_column_wrap(
+                                ui.input_numeric(
+                                    id='tso_depth_min',
+                                    label='',
+                                    value=None,
+                                ),
+                                ui.input_numeric(
+                                    id='tso_depth_max',
+                                    label='',
+                                    value=None,
+                                ),
+                                ui.input_action_button(
+                                    id="redraw_tso",
+                                    label="Re-draw",
+                                    class_="btn btn-outline-primary btn-sm",
+                                ),
+                                width=1/3,
+                                fixed_width=False,
+                                gap='5px',
+                                fill=False,
+                                fillable=True,
+                                class_="p-0 pb-2 m-0",
+                            ),
+                            class_="px-0 py-0 m-0",
+                        ),
+
                         class_="px-0 py-0 m-0",
                     ),
 
-                    ui.panel_conditional(
-                        "input.tab === 'TSO'",
-                        ui.layout_column_wrap(
-                            'Display:',
-                            ui.input_select(
-                                id="tso_plot",
-                                label="",
-                                choices=tso_choices,
-                                selected='tso',
-                            ),
-                            'Resolution:',
-                            ui.tooltip(
-                                ui.input_numeric(
-                                    id="tso_resolution",
-                                    label="",
-                                    value=250.0,
-                                    min=0.0, max=3000.0, step=25.0,
-                                ),
-                                "True resolution = 6000",
-                                id='tso_resolution_tooltip',
-                                placement="bottom",
-                            ),
-                            width=1/2,
-                            fixed_width=False,
-                            gap='0px',
-                            fill=False,
-                            fillable=True,
-                            class_="px-0 pb-1 m-0",
-                        ),
-                        "Wavelength:",
-                        ui.layout_column_wrap(
-                            ui.input_numeric(
-                                id='tso_wl_min', label='',
-                                value=None, min=0.2, max=30.0, step=0.02,
-                            ),
-                            ui.input_numeric(
-                                id='tso_wl_max', label='',
-                                value=None, min=0.2, max=30.0, step=0.1,
-                            ),
-                            ui.input_select(
-                                id="tso_wl_scale",
-                                label='',
-                                choices=wl_scales,
-                                selected='linear',
-                            ),
-                            width=1/3,
-                            fixed_width=False,
-                            gap='5px',
-                            fill=False,
-                            fillable=True,
-                            class_="p-0 pb-1 m-0",
-                        ),
-                        "Depth:",
-                        ui.layout_column_wrap(
-                            ui.input_numeric(
-                                id='tso_depth_min',
-                                label='',
-                                value=None,
-                            ),
-                            ui.input_numeric(
-                                id='tso_depth_max',
-                                label='',
-                                value=None,
-                            ),
-                            ui.input_action_button(
-                                id="redraw_tso",
-                                label="Re-draw",
-                                class_="btn btn-outline-primary btn-sm",
-                            ),
-                            width=1/3,
-                            fixed_width=False,
-                            gap='5px',
-                            fill=False,
-                            fillable=True,
-                            class_="p-0 pb-2 m-0",
-                        ),
-                        class_="px-0 py-0 m-0",
-                    ),
                     class_="px-2 py-1 pb-0 m-0 gap-0",
                     style=card_style,
                     fill=False,
@@ -1167,6 +1170,7 @@ app_ui = ui.page_fluid(
 # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 def server(input, output, session):
     actual_resolution = reactive.Value(6000)
+    wl_binsize = reactive.Value(1)
     bookmarked_sed = reactive.Value(False)
     bookmarked_depth = reactive.Value(False)
     saturation_label = reactive.Value(None)
@@ -2249,11 +2253,20 @@ def server(input, output, session):
 
 
     @reactive.effect
-    @reactive.event(actual_resolution)
-    def acquisition_targets():
-        resolution = actual_resolution.get()
-        tip = f'True resolution = {resolution}'
-        ui.update_tooltip('noise_resolution_tooltip', tip)
+    @reactive.event(input.tso_resolution)
+    def update_actual_resolution():
+        resolution = input.tso_resolution.get()
+        if resolution == 0.0:
+            binsize = 1
+            actual_resolution.set(6000.0)
+        else:
+            idx = searchsorted_closest(resolutions, resolution)
+            binsize = bins[idx]
+            actual_resolution.set(resolutions[idx])
+
+        if binsize != wl_binsize.get():
+            wl_binsize.set(binsize)
+        tip = f'True resolution = {actual_resolution.get():.1f}'
         ui.update_tooltip('tso_resolution_tooltip', tip)
 
 
@@ -2347,16 +2360,8 @@ def server(input, output, session):
         bands = tso['meta']['bands']
 
         plot_type = input.noise_plot.get()
-        resolution = input.noise_resolution.get()
+        binsize = wl_binsize.get()
         wl_scale = input.noise_wl_scale.get()
-
-        if resolution == 0.0:
-            binsize = 1
-            actual_resolution.set(6000.0)
-        else:
-            idx = searchsorted_closest(resolutions, resolution)
-            binsize = bins[idx]
-            actual_resolution.set(f'{resolutions[idx]:.1f}')
 
         if plot_type == 'variance':
             head = 'wl(um)  source(e/s)  sky(e/s)  dark(e/s)  read_noise(e/s)  wl_half_width(um)'
@@ -2414,7 +2419,7 @@ def server(input, output, session):
         tso = tso_runs[key][tso_label]
 
         plot_type = input.tso_plot.get()
-        resolution = input.tso_resolution.get()
+        binsize = wl_binsize.get()
         wl_scale = input.tso_wl_scale.get()
 
         efficiency = input.efficiency.get() * pc.percent
@@ -2431,14 +2436,6 @@ def server(input, output, session):
             )
             ui.notification_show(error_msg, type="warning", duration=5)
             return go.Figure()
-
-        if resolution == 0.0:
-            binsize = 1
-            actual_resolution.set(6000.0)
-        else:
-            idx = searchsorted_closest(resolutions, resolution)
-            binsize = bins[idx]
-            actual_resolution.set(f'{resolutions[idx]:.1f}')
 
         # Transit-depth model at WALTzER resolving power
         depth_label, wl, depth = read_depth_spectrum(input, spectra)
