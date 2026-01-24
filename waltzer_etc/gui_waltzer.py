@@ -290,9 +290,11 @@ layout_kwargs = dict(
     class_="pb-2 pt-0 m-0",
 )
 
-welcome = f"""This is the WALTzER ETC, version **{waltz.__version__}**
+welcome = f"""\
+To update:
 
-To update, cd into the `waltzer_etc/` folder containing `pyproject.toml`, and then run these commands:
+- cd into the `waltzer_etc/` folder containing `pyproject.toml`
+- then run these commands:
 ```shell
 git pull origin main
 pip install -e .
@@ -1216,35 +1218,22 @@ def server(input, output, session):
 
         m = ui.modal(
             ui.hr(),
-            ui.layout_columns(
-                ui.markdown(welcome),
-                ui.span(
-                    ui.HTML('The Github repository is located here: '),
-                    ui.tags.a(
-                        fa.icon_svg("github", fill='black'),
-                        href=github_url,
-                        target="_blank",
-                    ),
-                    ui.tags.a(github_url, href=github_url, target="_blank"),
+            ui.markdown(welcome),
+            ui.span(
+                ui.HTML('The Github repository is located here: '),
+                ui.tags.a(
+                    fa.icon_svg("github", fill='black'),
+                    href=github_url,
+                    target="_blank",
                 ),
-                ui.hr(),
-                # JWST and NASA databases:
-                ui.HTML(f'JWST database last updated: {last_trexo}'),
-                ui.HTML(f"NASA exoplanets database last updated: {last_nasa}"),
-                # SEDs
-                #ui.input_task_button(
-                #    id='update_pysynphot',
-                #    label='Update Pysynphot',
-                #    label_busy="Fetching pysynphot data from STScI ...",
-                #    width=button_width,
-                #    class_="btn btn-sm",
-                #),
-                col_widths=(12),
-                gap='10px',
-                class_="px-0 py-0 mx-0 my-0",
+                ui.tags.a(github_url, href=github_url, target="_blank"),
             ),
             ui.hr(),
-            title=ui.markdown("**WALTzER ETC**"),
+            # JWST and NASA databases:
+            ui.markdown(f'JWST database last updated: {last_trexo}'),
+            ui.markdown(f"NASA exoplanets database last updated: {last_nasa}"),
+            ui.hr(),
+            title=ui.markdown(f"**WALTzER ETC (version {waltz.__version__})**"),
             easy_close=True,
             size='l',
         )
