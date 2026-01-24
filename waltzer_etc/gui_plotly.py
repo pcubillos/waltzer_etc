@@ -666,7 +666,7 @@ def plotly_tso_spectra(
         x=wl,
         y=depth/u(depth_units),
         mode='lines',
-        name='model_label',
+        name='model',
         line=dict(color=model_col, width=1.5),
         opacity=0.85,
     ))
@@ -702,14 +702,13 @@ def plotly_tso_spectra(
     )
 
     fig.update_layout(legend=dict(
-        orientation="h",
-        entrywidth=1.0,
-        entrywidthmode='fraction',
-        yanchor="bottom",
+        bgcolor="rgba(255, 255, 255, 0.6)",
+        yanchor="top",
         xanchor="right",
-        y=1.02,
-        x=1
+        y=0.99,
+        x=0.99,
     ))
+
     fig.update_layout(showlegend=True)
     return fig
 
