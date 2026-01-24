@@ -23,7 +23,7 @@ dependencies = [
     'pandas',
     'synphot',
     'pyratbay>=2.0.0',
-    'shiny>=1.0.0',
+    'shiny>=1.4.0',
     'shinywidgets',
     'pandeia.engine>=2025.7',
     'scipy>=1.14.1',
