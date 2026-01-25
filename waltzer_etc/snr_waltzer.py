@@ -234,15 +234,18 @@ class Detector():
 
         Returns
         -------
-        mean_flux: float
+        min_flux: float
+            Minimum flux within the wavelength range (mJy).
+        median_flux: float
             Mean flux within the wavelength range (mJy).
         max_flux: float
             Maximum flux within the wavelength range (mJy).
         """
         band = (wl > self.wl_min) & (wl < self.wl_max)
-        mean_flux = np.mean(flux[band])
+        min_flux = np.min(flux[band])
+        median_flux = np.median(flux[band])
         max_flux = np.max(flux[band])
-        return mean_flux, max_flux
+        return min_flux, median_flux, max_flux
 
 
     def calc_total_noise(self, wl, flux, integ_time=1.0):
@@ -361,7 +364,9 @@ class Detector():
 
         Returns
         -------
-        snr_mean: Float
+        snr_min: Float
+            Min signal-to-noise of the flux measurement.
+        snr_median: Float
             Mean signal-to-noise of the flux measurement.
         snr_max: Float
             Max signal-to-noise of the flux measurement.
@@ -373,14 +378,15 @@ class Detector():
 
         # Signal-to-noise estimation
         snr = total_flux / np.sqrt(variance)
-        snr_mean = np.mean(snr)
+        snr_min = np.min(snr)
+        snr_median = np.median(snr)
         snr_max = np.max(snr)
 
         # Assume t_in = t_out
         # Assume flux_in approx flux_out
-        transit_uncert = np.sqrt(2.0) / snr_mean / pc.ppm
+        transit_uncert = np.sqrt(2.0) / snr_median / pc.ppm
 
-        return snr_mean, snr_max, transit_uncert
+        return snr_min, snr_median, snr_max, transit_uncert
 
 
 def bin_tso_data(

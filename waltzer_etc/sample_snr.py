@@ -156,7 +156,7 @@ def waltzer_sample(
         integ_time = exp_time[i] * n_obs
         nuv_snr_stats = nuv_det.snr_stats(wl, flux, integ_time)
         vis_snr_stats = vis_det.snr_stats(wl, flux, integ_time)
-        nir_snr_stats = nir_det.snr_stats(wl, flux, integ_time)[1:]
+        nir_snr_stats = nir_det.snr_stats(wl, flux, integ_time)[2:]
         print(
             f'{i+1:2d}/{ntargets}: {repr(target):15} '
             f'{v_mags[i]:5.2f}  {teff_match:5.0f}  '
@@ -213,19 +213,20 @@ def waltzer_sample(
 
     # Save result as CSV file
     header = (
-        "target, teff, r_star, m_star, ra, dec, V_mag, transit_dur,"
-        "NUV_mean_flux, NUV_max_flux,"
-        "NUV_mean_snr, NUV_max_snr, NUV_transit_uncert, "
-        "VIS_mean_flux, VIS_max_flux, "
-        "VIS_mean_snr, VIS_max_snr, VIS_transit_uncert, "
-        "NIR_mean_flux, NIR_max_flux, NIR_snr, NIR_transit_uncert "
+        "target, teff, r_star, m_star, ra, dec, V_mag, transit_dur, "
+        "NUV_min_flux, NUV_median_flux, NUV_max_flux, "
+        "NUV_min_snr, NUV_median_snr, NUV_max_snr, NUV_transit_uncert, "
+        "VIS_min_flux, VIS_median_flux, VIS_max_flux, "
+        "VIS_min_snr, VIS_median_snr, VIS_max_snr, VIS_transit_uncert, "
+        "NIR_min_flux, NIR_median_flux, NIR_max_flux, "
+        "NIR_snr, NIR_transit_uncert "
     ).split(',')
     header = [h.strip() for h in header]
     units = (
         "#name, K, R_sun, M_sun, deg, deg, , h,"
-        "mJy, mJy, , , ppm,"
-        "mJy, mJy, , , ppm,"
-        "mJy, mJy, , ppm"
+        "mJy, mJy, mJy, , , , ppm,"
+        "mJy, mJy, mJy, , , , ppm,"
+        "mJy, mJy, mJy, , ppm"
     ).split(',')
 
     with open(output_csv, 'w') as f:
