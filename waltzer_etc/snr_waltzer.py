@@ -9,6 +9,7 @@ __all__ = [
 ]
 
 import configparser
+import os
 import random
 
 import numpy as np
@@ -52,26 +53,50 @@ def calc_collecting_area(diameter, band):
     # Effective collecing areas in cm^2
     if band == 'nuv':
         eff_area = (
-            primary_area * Rprim * Rsec * Sec_obstr *
-            R_d1 * R_uvfold * R_uvgr * Uv_geff * Uv_detQE
+            primary_area * Rprim * Rsec * Sec_obstr
+            * R_d1 * R_uvfold * R_uvgr * Uv_geff
+            #* Uv_detQE
         )
         return eff_area
 
     if band == 'vis':
         eff_area = (
-            primary_area * Rprim * Rsec * Sec_obstr *
-            R_d1 * R_d2 * R_opfold**2 * R_opgr * Op_geff * Op_detQE
+            primary_area * Rprim * Rsec * Sec_obstr
+            * R_d1 * R_d2 * R_opfold**2 * R_opgr * Op_geff
+            #* Op_detQE
         )
         return eff_area
 
     if band == 'nir':
         eff_area = (
-            primary_area * Rprim * Rsec * Sec_obstr *
-            R_d1 * R_d2 * R_opfold * BB_detQE
+            primary_area * Rprim * Rsec * Sec_obstr
+            * R_d1 * R_d2 * R_opfold
+            #* BB_detQE
         )
         return eff_area
 
     raise ValueError(f'Invalid band {repr(band)}')
+
+
+def throughput(file):
+    """
+    Load a quantum-efficiency curve into a scipy interpolator function
+    if input file is a number, assume that as fixed QE.
+    """
+    if os.path.exists(file):
+        wl_det, response = np.loadtxt(file, unpack=True)
+    else:
+        resp = float(os.path.split(file)[1])
+        wl_det = [0.2, 2.0]
+        response = np.tile(resp, 2)
+
+    response /= 100.0
+    fill_value = response[0], response[-1]
+    throughput = si.interp1d(
+        wl_det, response,
+        kind='slinear', bounds_error=False, fill_value=fill_value,
+    )
+    return throughput
 
 
 class Detector():
@@ -103,6 +128,8 @@ class Detector():
         self.mode = det.get('mode')
 
         self.eff_area = calc_collecting_area(diameter, self.band)
+        qe_file = f'{ROOT}/data/detectors/{det.get("qe_file")}'
+        self.throughput = throughput(qe_file)
 
         self.resolution = det.getfloat('resolution')
         self.pix_scale = det.getfloat('pix_scale')
@@ -187,16 +214,17 @@ class Detector():
         >>> wl_min = 6700
         >>> wl_max = 7100
         """
+        throughput = self.throughput(wl)
         # Convert flux (mJy) to photons s-1 Hz-1
         photon_energy = pc.h * pc.c / (wl*pc.um)
-        photons_nu = 1e-26 * flux / photon_energy * self.eff_area
+        photons_nu = 1e-26 * flux / photon_energy * self.eff_area * throughput
         # Now convert to photons s-1 um-1
         photons = photons_nu * pc.c / (wl*pc.um)**2.0 * pc.um
 
         # Background flux (erg s-1 cm-2 A-1 pixel-1)
         bkg_flux = self.bkg_model(wl) * self.pix_scale**2.0
         # Convert flux (erg s-1 cm-2 A-1 pixel-1) to photons s-1 um-1 pixel-1
-        bkg_photons = bkg_flux / photon_energy * self.eff_area * pc.um/pc.A
+        bkg_photons = bkg_flux / photon_energy * self.eff_area * throughput * pc.um/pc.A
 
         # Integrate at each instrumental bin to get photons s-1
         if self.mode == 'photometry':
