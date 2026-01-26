@@ -1,26 +1,23 @@
-# Copyright (c) 2025 Patricio Cubillos
+# Copyright (c) 2025-2026 Patricio Cubillos and A. G. Sreejith
 # Gen TSO is open-source software under the GPL-2.0 license (see LICENSE)
 
+import csv
 import os
 import socket
 import ssl
 from datetime import datetime
 import re
-import json
 
 import numpy as np
 import pyratbay.spectrum as ps
 import pyratbay.constants as pc
 import pyratbay.tools as pt
-#from gen_tso import pandeia_io as jwst
 from shiny import ui
 from shiny.ui._card import card_body
 import requests
 import prompt_toolkit as ptk
 from astropy.coordinates import Angle, SkyCoord
 from astropy.units import hourangle, deg
-from astropy.io import ascii
-
 
 import waltzer_etc.sed as sed
 import waltzer_etc as waltz
@@ -28,14 +25,25 @@ from waltzer_etc.utils import ROOT
 from waltzer_etc.target import Target
 
 
-# Catalog of stellar SEDs:
-sed_dict = {}
-for sed_type in sed.get_sed_types():
-    sed_keys, sed_models = sed.get_sed_list()
-    sed_dict[sed_type] = {
-        key: model
-        for key,model in zip(sed_keys, sed_models)
-    }
+def make_sed_catalog():
+    sed_dict = {}
+    sed_labels = {}
+    for sed_type in sed.get_sed_types():
+        sed_labels[sed_type] = {}
+        sed_keys, sed_models, sed_teff, sed_logg = sed.get_sed_list(sed_type)
+        for i in range(len(sed_keys)):
+            spectral_type = sed_models[i].split()[0]
+            key = f'{sed_type}_{spectral_type}_{sed_teff[i]:.0f}K'
+            sed_labels[sed_type][key] = str(sed_models[i])
+            sed_dict[key] = {
+                'teff': sed_teff[i],
+                'logg': sed_logg[i],
+                'label': sed_models[i],
+                'sed_type': sed_type,
+            }
+    return sed_dict, sed_labels
+
+sed_catalog, sed_dict = make_sed_catalog()
 
 
 bands_dict = {
@@ -77,7 +85,7 @@ def get_throughput():
 
     for i,det_name in enumerate(det_names):
        det = waltz.Detector(det_name)
-       wl = np.linspace(det.wl_min, det.wl_max, nwave) * pc.A / pc.um
+       wl = np.linspace(det.wl_min, det.wl_max, nwave)
        response = np.ones(nwave)
        response[-1] = 0.0
 
@@ -98,13 +106,18 @@ def get_auto_sed(input):
     """
     sed_type = input.sed_type()
     sed_models = sed_dict[sed_type]
+    # Avoid breaking if the SED models are not there.
+    if len(sed_models) == 0:
+        return sed_models, ''
 
     try:
         t_eff = _safe_num(input.t_eff.get(), default=1400.0, cast=float)
     except ValueError:
         return sed_models, None
-    chosen_sed, temp = sed.find_closest_teff(t_eff)
-    return sed_models, chosen_sed
+    logg = _safe_num(input.log_g.get(), default=4.5, cast=float)
+    sed_file, label, temp, log_g = sed.find_closest_sed(t_eff, logg, sed_type)
+    selected_sed = next(k for k, val in sed_models.items() if val == label)
+    return sed_models, selected_sed
 
 
 def planet_model_name(input):
@@ -174,29 +187,18 @@ def parse_obs(input):
     return planet_model_type, depth_model, rprs_sq, teq_planet
 
 
-def make_tso_label(input):
+def make_tso_label(input, spectra):
     """Extract SED parameters"""
     name = input.target.get()
     bands = input.bands.get()
     band_names = ' + '.join(bands)
 
-    #sed_type = input.sed_type()
-    norm_band = 'johnson,v'
-    norm_magnitude = _safe_num(input.magnitude.get(), default=10.0, cast=float)
-    band_name = bands_dict[norm_band].split()[0]
-    sed_model = input.sed.get()
-
-    ini = sed_model.index('t') + 1
-    end = sed_model.index('g')
-    teff = int(sed_model[ini:end])
-
-    sed_label = f'Teff={teff}K {band_name}={norm_magnitude:.2f}'
-
+    sed_type, sed_model, norm_mag, sed_label = parse_sed(input, spectra)
     label = f'{name} / {sed_label} / {band_names}'
     return label
 
 
-def parse_sed(input, spectra):
+def parse_sed(input, spectra=None):
     """Extract SED parameters"""
     sed_type = input.sed_type()
     norm_band = 'johnson,v'
@@ -205,26 +207,26 @@ def parse_sed(input, spectra):
     if sed_type in sed_dict:
         sed_model = input.sed.get()
         if sed_model not in sed_dict[sed_type]:
-            return None, None, None, None, None
-        model_label = f'{sed_type}_{sed_model}'
+            return None, None, None, None
+
     elif sed_type == 'blackbody':
         sed_model = _safe_num(input.t_eff.get(), default=1400.0, cast=float)
-        model_label = f'bb_{sed_model:.0f}K'
+        sed_model = f'bb_{sed_model:.0f}K'
+
     elif sed_type == 'input':
-        model_label = input.sed.get()
-        if model_label not in spectra['sed']:
-            return None, None, None, None, None
-        sed_model = spectra['sed'][model_label]
+        sed_model = input.sed.get()
+        if sed_model not in spectra['sed']:
+            return None, None, None, None
 
     # Make a label
     band_name = bands_dict[norm_band].split()[0]
     band_label = f'{norm_magnitude:.2f}_{band_name}'
-    sed_label = f'{model_label}_{band_label}'
+    sed_label = f'{sed_model}_{band_label}'
 
     return sed_type, sed_model, norm_magnitude, sed_label
 
 
-def read_spectrum_file(file, units='none', on_fail=None):
+def read_spectrum_file(file, units='none', wl_units='micron', on_fail=None):
     """
     Parameters
     ----------
@@ -241,6 +243,8 @@ def read_spectrum_file(file, units='none', on_fail=None):
             'f_freq' (for erg s-1 cm-2 Hz-1),
             'f_nu' (for for erg s-1 cm-2 cm),
             'f_lambda' (for erg s-1 cm-2 cm-1)
+    wl_units:
+        Units of the input wavelength. Use one of 'micron' or 'angstrom'.
     on_fail: String
         if 'warning' raise a warning.
         if 'error' raise an error.
@@ -283,6 +287,10 @@ def read_spectrum_file(file, units='none', on_fail=None):
         if on_fail == 'error':
             raise ValueError(error_msg)
         return None, None, None
+
+    # Set the units:
+    if wl_units == 'angstrom':
+        wl *= pc.A / pc.um
 
     # Set the units:
     if units in depth_units:
@@ -767,40 +775,6 @@ def load_targets(database='nea_data.txt', is_confirmed=np.nan):
     return targets
 
 
-def _add_planet_info(observations):
-    """
-    Add planet letter info to a list of observations
-    and other corrections
-    """
-    planets_file = f'{ROOT}data/planets_per_program.json'
-    with open(planets_file, "r") as f:
-        planet_data = json.load(f)
-
-    known_obs = []
-    for obs in observations:
-        pid = obs['pid']
-        obs_id = obs['observation']
-        key = f'{pid}_{obs_id}'
-        known_obs.append(key)
-        if key in planet_data:
-            for var, value in planet_data[key].items():
-                obs[var] = value
-
-    for key,obs in planet_data.items():
-        if key not in known_obs and 'missing' in obs:
-            obs.pop('missing')
-            date_format = "%Y-%m-%d %H:%M:%S"
-            val = obs['date_start']
-            if isinstance(val, str):
-                obs['date_start'] = datetime.strptime(val, date_format)
-            val = obs['date_end']
-            if isinstance(val, str):
-                obs['date_end'] = datetime.strptime(val, date_format)
-            observations.append(obs)
-
-    return observations
-
-
 def _group_by_target(observations):
     """
     Group observations by host, using RA and dec to detect aliases
@@ -829,142 +803,53 @@ def _group_by_target(observations):
     return grouped_data
 
 
-def load_trexolists(grouped=False, trexo_file=None):
+def load_jwst_programs(grouped=False, csv_file=None):
     """
-    Extract the JWST programs' data from a trexolists.csv file.
-    Note that trexolists know targets by their host star, not by
-    individual planets in a given system.
+    Get the data from the downloaded JWST programs (xml files)
 
     Parameters
     ----------
     grouped: Bool
-        - If False, return a single 1D list with observations.
-        - If True, return a nested list of the observations per target.
-    trexo_file: String
-        If None, extract data from default Gen TSO location.
-        Otherwise, a path to a trexolists.csv file.
+        - If False, return a 1D list of all observations
+        - If True, return a nested list of observations grouped by
+          host target.
+    csv_file: String
+        Path to a csv file saved with parse_programs().
+        If None, load the default csv file of gen_tso (which should
+        contain all known programs).
 
-    Returns
-    -------
-    observations: 1D or 2D list of dictionaries
-        A list of all JWST observations, where each item is a dictionary
-        containing the observation's details.
-        If grouped is True, the output is a nested list, where the
-        observations are grouped per target (host).
-
+    Examples
+    --------
+    >>> import gen_tso.catalogs as cat
+    >>> programs = cat.load_jwst_programs()
     """
-    if trexo_file is None:
-        trexo_file = f'{ROOT}data/trexolists.csv'
-
-    trexolist_data = ascii.read(
-        trexo_file,
-        format='csv', guess=False, fast_reader=False, comment='#',
-    )
-
-    nirspec_filter = {
-        'G395H': 'F290LP',
-        'G395M': 'F290LP',
-        'G235H': 'F170LP',
-        'G235M': 'F170LP',
-        'G140H': 'F100LP',
-        'G140M': 'F100LP',
-        'PRISM': 'CLEAR',
-    }
-    instrument = {
-        'BOTS': 'NIRSPEC',
-        'SOSS': 'NIRISS',
-        'GTS': 'NIRCAM',
-        'LRS': 'MIRI',
-        'MRS': 'MIRI',
-        'F1500W': 'MIRI',
-        'F1280W': 'MIRI',
-    }
+    # Read the CSV file into a list of dictionaries
+    if csv_file is None:
+        csv_file = f'{ROOT}data/jwst_tso_programs.csv'
 
     observations = []
-    for i,data in enumerate(trexolist_data):
-        obs = {}
-        obs['category'] = str(data['ProposalCategory'])
-        obs['pi'] = str(data['LastName'])
-        obs['pid'] = str(data['ProposalID'])
-        obs['cycle'] = str(data['Cycle'])
-        obs['proprietary_period'] = int(data['ProprietaryPeriod'])
+    with open(csv_file, mode="r", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            observations.append(row)
 
-        target = str(data['hostname_nn'])
-        obs['target'] = normalize_name(target)
-        obs['target_in_program'] = target
-        obs['planets'] = data['letter_nn'].split('+')
-        obs['event'] = data['Event'].lower().replace('phasec', 'phase curve')
-
-        obs['observation'] = str(data['Observation'])
-        obs['visit'] = '1'
-        obs['status'] = str(data['Status'])
-        coordinates = data['EquatorialCoordinates'].split()
-        obs['ra'] = ':'.join(coordinates[0:3])
-        obs['dec'] = ':'.join(coordinates[3:6])
-
-        mode = str(data['ObservingMode'])
-        disperser = obs['disperser'] = str(data['GratingGrism'])
-        inst = obs['instrument'] = instrument[mode]
-        if mode == 'SOSS':
-            disperser = 'None'
-            filter = 'CLEAR'
-        elif mode == 'LRS':
-            disperser = 'None'
-            filter = 'None'
-        elif mode == 'MRS':
-            disperser = 'unknown'
-            filter = 'None'
-        elif inst == 'MIRI':
-            # disperser will be fixed below by _add_planet_info()
-            disperser = 'None'
-            filter = mode
-            mode = 'Imaging TS'
-        elif mode == 'GTS':
-            mode = 'GRISMR TS'
-            disperser, filter = disperser.split('+')
-            if '_' in data['Subarray']:
-                disperser = f'DHS0,{disperser}'
-                # hard-coded, known up to Cycle4:
-                # will be fixed below by _add_planet_info()
-                filter = f'F150W2,{filter}'
-        elif inst == 'NIRSPEC':
-            filter = nirspec_filter[disperser]
-        obs['mode'] = mode
-        obs['disperser'] = disperser
-        obs['filter'] = filter
-
-        obs['subarray'] = str(data['Subarray'])
-        obs['readout'] = str(data['ReadoutPattern'])
-        obs['groups'] = int(data['Groups'])
-
-        window = str(data['PlanWindow'])
-        if window == 'X':
-            obs['plan_window'] = None
-        elif '(' in window:
-            window = window[0:window.index('(')]
-            w_start, w_end = window.split('-')
-            start = datetime.strptime(w_start.strip(), '%b %d, %Y')
-            end = datetime.strptime(w_end.strip(), '%b %d, %Y')
-            obs['plan_window'] = f"{start.strftime('%Y-%m-%d')} - {end.strftime('%Y-%m-%d')}"
-        else:
-            obs['plan_window'] = window
-
-        obs['duration'] = float(data['Hours'])
-
-        date = data['StartTime']
-        if date == 'X':
-            obs['date_start'] = None
-        else:
-            obs['date_start'] = datetime.strptime(date, '%b %d, %Y %H:%M:%S')
-        date = data['EndTime']
-        if date == 'X':
-            obs['date_end'] = None
-        else:
-            obs['date_end'] = datetime.strptime(date, '%b %d, %Y %H:%M:%S')
-
-        observations.append(obs)
-
-    observations = _add_planet_info(observations)
+    # Parse data types
+    int_keys = ['cycle', 'groups', 'integrations', 'proprietary_period']
+    float_keys = ['duration', 'period', 'phase_start', 'phase_duration']
+    date_keys = ['date_start', 'date_end']
+    for obs in observations:
+        for key,val in obs.items():
+            if val == '':
+                obs[key] = None
+            elif key in int_keys:
+                obs[key] = int(val)
+            elif key in float_keys:
+                obs[key] = float(val)
+            elif key in date_keys:
+                date_format = "%Y-%m-%d %H:%M:%S"
+                obs[key] = datetime.strptime(val, date_format)
+            elif key == 'planets':
+                obs[key] = eval(obs[key])
 
     if grouped:
         return _group_by_target(observations)
@@ -1206,8 +1091,7 @@ class Catalog():
             custom = load_targets(custom_targets, is_confirmed=True)
             self.targets += custom
 
-        # TBD: a switch between load_trexolists() and load_programs()?
-        programs = load_trexolists(grouped=True)
+        programs = load_jwst_programs(grouped=True)
         njwst = len(programs)
         aliases_file = f'{ROOT}data/target_aliases.txt'
         host_aliases = load_aliases('host', aliases_file)

@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Patricio Cubillos and A. G. Sreejith
+# Copyright (c) 2025-2026 Patricio Cubillos and A. G. Sreejith
 # WALTzER is open-source software under the GPL-2.0 license (see LICENSE)
 
 __all__ = [
@@ -6,21 +6,18 @@ __all__ = [
     'bin_tso_data',
     'simulate_fluxes',
     'simulate_spectrum',
-    'waltzer_snr',
 ]
 
 import configparser
-import pickle
+import os
 import random
 
 import numpy as np
-import pandas as pd
 import pyratbay.constants as pc
 import pyratbay.spectrum as ps
 import scipy.interpolate as si
 
-from .utils import ROOT, inst_convolution
-from . import sed
+from .utils import ROOT
 
 
 DEFAULT_DETS = {
@@ -56,26 +53,50 @@ def calc_collecting_area(diameter, band):
     # Effective collecing areas in cm^2
     if band == 'nuv':
         eff_area = (
-            primary_area * Rprim * Rsec * Sec_obstr *
-            R_d1 * R_uvfold * R_uvgr * Uv_geff * Uv_detQE
+            primary_area * Rprim * Rsec * Sec_obstr
+            * R_d1 * R_uvfold * R_uvgr * Uv_geff
+            #* Uv_detQE
         )
         return eff_area
 
     if band == 'vis':
         eff_area = (
-            primary_area * Rprim * Rsec * Sec_obstr *
-            R_d1 * R_d2 * R_opfold**2 * R_opgr * Op_geff * Op_detQE
+            primary_area * Rprim * Rsec * Sec_obstr
+            * R_d1 * R_d2 * R_opfold**2 * R_opgr * Op_geff
+            #* Op_detQE
         )
         return eff_area
 
     if band == 'nir':
         eff_area = (
-            primary_area * Rprim * Rsec * Sec_obstr *
-            R_d1 * R_d2 * R_opfold * BB_detQE
+            primary_area * Rprim * Rsec * Sec_obstr
+            * R_d1 * R_d2 * R_opfold
+            #* BB_detQE
         )
         return eff_area
 
     raise ValueError(f'Invalid band {repr(band)}')
+
+
+def throughput(file):
+    """
+    Load a quantum-efficiency curve into a scipy interpolator function
+    if input file is a number, assume that as fixed QE.
+    """
+    if os.path.exists(file):
+        wl_det, response = np.loadtxt(file, unpack=True)
+    else:
+        resp = float(os.path.split(file)[1])
+        wl_det = [0.2, 2.0]
+        response = np.tile(resp, 2)
+
+    response /= 100.0
+    fill_value = response[0], response[-1]
+    throughput = si.interp1d(
+        wl_det, response,
+        kind='slinear', bounds_error=False, fill_value=fill_value,
+    )
+    return throughput
 
 
 class Detector():
@@ -86,10 +107,11 @@ class Detector():
 
         Parameters
         ----------
-        wl_edges: 1D float array
-            Edges of the instrumental bins (angstrom).
-        eff_collecting_area: float
-            Effective collecting area of the instrument (cm²).
+        detector_cfg: string
+            Path to a detector configuration file.
+            Or 'nuv', 'vis', 'nir' to use one of the default configurations.
+        diameter: float
+            Telescope primary-mirror diameter (cm).
 
         Examples
         --------
@@ -106,6 +128,8 @@ class Detector():
         self.mode = det.get('mode')
 
         self.eff_area = calc_collecting_area(diameter, self.band)
+        qe_file = f'{ROOT}/data/detectors/{det.get("qe_file")}'
+        self.throughput = throughput(qe_file)
 
         self.resolution = det.getfloat('resolution')
         self.pix_scale = det.getfloat('pix_scale')
@@ -118,12 +142,12 @@ class Detector():
         self.wl_max = det.getfloat('wl_max')
 
         wl_edges = ps.constant_resolution_spectrum(
-            2_400, 20_000, resolution=2.0*self.resolution,
+            0.24, 2.0, resolution=2.0*self.resolution,
         )
         i_min = np.searchsorted(wl_edges, self.wl_min)
         i_max = np.searchsorted(wl_edges, self.wl_max)
         self._wl_edges = wl_edges[i_min:i_max]
-        # Center and half-widths of wavelength bins (angstrom):
+        # Center and half-widths of wavelength bins (micron):
         self.wl = 0.5 * (wl_edges[i_min+1:i_max] + wl_edges[i_min:i_max-1])
         self.half_widths = self.wl - wl_edges[i_min:i_max-1]
 
@@ -135,6 +159,8 @@ class Detector():
         # TBD: In future this might depend on {RA,dec} of targets
         # Background flux (erg s-1 cm-2 A-1 arcsec-2)
         wl_bkg, sky = np.loadtxt(f'{ROOT}/data/background.txt', unpack=True)
+        # Convert wavelength from angstrom to micron:
+        wl_bkg /= pc.um/pc.A
         self.bkg_model = si.interp1d(
             wl_bkg, sky, kind='slinear', bounds_error=False,
         )
@@ -146,11 +172,9 @@ class Detector():
         Parameters
         ----------
         wl: 1D float array
-            Input wavelength array (angstrom).
+            Input wavelength array (micron).
         flux: 1D float array
-            Input flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹).
-        bkg_flux: 1D float array
-            Background flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹ pixel⁻¹).
+            Input flux spectrum (mJy).
 
         Returns
         -------
@@ -163,7 +187,7 @@ class Detector():
         --------
         >>> # TBD
         >>> resolution = 60_000.0
-        >>> wl = ps.constant_resolution_spectrum(2_400, 20_000, resolution)
+        >>> wl = ps.constant_resolution_spectrum(0.23, 2.0, resolution)
         >>> inst_resolution = 3_000.0
         >>> bin_edges = ps.constant_resolution_spectrum(
         >>>     2_400, 20_000, 2.0*inst_resolution,
@@ -190,13 +214,17 @@ class Detector():
         >>> wl_min = 6700
         >>> wl_max = 7100
         """
-        # Convert flux (erg s-1 cm-2 A-1) to photons s-1 A-1
-        photons = flux * wl*pc.A / (pc.c*pc.h) * self.eff_area
+        throughput = self.throughput(wl)
+        # Convert flux (mJy) to photons s-1 Hz-1
+        photon_energy = pc.h * pc.c / (wl*pc.um)
+        photons_nu = 1e-26 * flux / photon_energy * self.eff_area * throughput
+        # Now convert to photons s-1 um-1
+        photons = photons_nu * pc.c / (wl*pc.um)**2.0 * pc.um
 
         # Background flux (erg s-1 cm-2 A-1 pixel-1)
         bkg_flux = self.bkg_model(wl) * self.pix_scale**2.0
-        # Convert flux (erg s-1 cm-2 A-1 pixel) to photons s-1 A-1 pixel-1
-        bkg_photons = bkg_flux * wl*pc.A / (pc.c*pc.h) * self.eff_area
+        # Convert flux (erg s-1 cm-2 A-1 pixel-1) to photons s-1 um-1 pixel-1
+        bkg_photons = bkg_flux / photon_energy * self.eff_area * throughput * pc.um/pc.A
 
         # Integrate at each instrumental bin to get photons s-1
         if self.mode == 'photometry':
@@ -210,15 +238,13 @@ class Detector():
 
         # Spectroscopy: integrate (photons s-1 A-1 pix-1) to photons s-1 pix-1
         wl_edges = self._wl_edges
+        edge_idx = np.searchsorted(wl, wl_edges)
         bin_flux = np.zeros(self.nwave)
         bin_bkg = np.zeros(self.nwave)
         for i in range(self.nwave):
-            bin_mask = (
-                (wl>=wl_edges[i]) &
-                (wl<=wl_edges[i+1])
-            )
-            bin_flux[i] = np.trapezoid(photons[bin_mask], wl[bin_mask])
-            bin_bkg[i] = np.trapezoid(bkg_photons[bin_mask], wl[bin_mask])
+            i1, i2 = edge_idx[i], edge_idx[i+1]+1
+            bin_flux[i] = np.trapezoid(photons[i1:i2], wl[i1:i2])
+            bin_bkg[i] = np.trapezoid(bkg_photons[i1:i2], wl[i1:i2])
 
         return bin_flux, bin_bkg
 
@@ -230,21 +256,24 @@ class Detector():
         Parameters
         ----------
         wl: 1D float array
-            Input wavelength array (angstrom).
+            Input wavelength array (microns).
         flux: 1D float array
-            Input flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹).
+            Input flux spectrum (mJy).
 
         Returns
         -------
-        mean_flux: float
-            Mean flux within the wavelength range (erg s⁻¹ cm⁻² angstrom⁻¹).
+        min_flux: float
+            Minimum flux within the wavelength range (mJy).
+        median_flux: float
+            Mean flux within the wavelength range (mJy).
         max_flux: float
-            Maximum flux within the wavelength range (erg s⁻¹ cm⁻² angstrom⁻¹).
+            Maximum flux within the wavelength range (mJy).
         """
         band = (wl > self.wl_min) & (wl < self.wl_max)
-        mean_flux = np.mean(flux[band])
+        min_flux = np.min(flux[band])
+        median_flux = np.median(flux[band])
         max_flux = np.max(flux[band])
-        return mean_flux, max_flux
+        return min_flux, median_flux, max_flux
 
 
     def calc_total_noise(self, wl, flux, integ_time=1.0):
@@ -254,9 +283,9 @@ class Detector():
         Parameters
         ----------
         wl: 1D float array
-            Input wavelength array (angstrom).
+            Input wavelength array (micron).
         flux: 1D float array
-            Input flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹).
+            Input flux spectrum (mJy).
         integ_time: Float
             Total integration time (s).  Leave as integ_time=1.0 to
             obtain the values per second.
@@ -283,9 +312,9 @@ class Detector():
         Parameters
         ----------
         wl: 1D float array
-            Input wavelength array (angstrom).
+            Input wavelength array (micron).
         flux: 1D float array
-            Input flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹).
+            Input flux spectrum (mJy).
         integ_time: Float
             Total integration time (s).
 
@@ -355,15 +384,17 @@ class Detector():
         Parameters
         ----------
         wl: 1D float array
-            Input wavelength array (angstrom).
+            Input wavelength array (micron).
         flux: 1D float array
-            Input flux spectrum (erg s⁻¹ cm⁻² angstrom⁻¹).
+            Input flux spectrum (mJy).
         integ_time: Float
             In-transit exposure time (s).
 
         Returns
         -------
-        snr_mean: Float
+        snr_min: Float
+            Min signal-to-noise of the flux measurement.
+        snr_median: Float
             Mean signal-to-noise of the flux measurement.
         snr_max: Float
             Max signal-to-noise of the flux measurement.
@@ -375,14 +406,15 @@ class Detector():
 
         # Signal-to-noise estimation
         snr = total_flux / np.sqrt(variance)
-        snr_mean = np.mean(snr)
+        snr_min = np.min(snr)
+        snr_median = np.median(snr)
         snr_max = np.max(snr)
 
         # Assume t_in = t_out
         # Assume flux_in approx flux_out
-        transit_uncert = np.sqrt(2.0) / snr_mean / pc.ppm
+        transit_uncert = np.sqrt(2.0) / snr_median / pc.ppm
 
-        return snr_mean, snr_max, transit_uncert
+        return snr_min, snr_median, snr_max, transit_uncert
 
 
 def bin_tso_data(
@@ -757,236 +789,4 @@ def simulate_spectrum(
     return bands, walz_wl, walz_depth, walz_err, walz_widths
 
 
-def waltzer_snr(
-         csv_file=None,
-         output_csv="waltzer_snr.csv",
-         diameter=35.0,
-         efficiency=0.6,
-         t_dur=None,
-         n_obs=10,
-    ):
-    """
-    WALTzER Exposure time calculator
 
-    Parameters
-    ----------
-    csv_file: String
-        A .csv list of targets (e.g., downloaded from the NASA
-        Exoplanet Archive).  This file must contain these headers:
-        - 'pl_name'  Target's name
-        - 'pl_trandur'  Transit duration (h)
-        - 'st_teff'  Host's effective temperature (K)
-        - 'st_rad'   Host's radius (R_sun)
-        - 'st_mass'  Host's mass (M_sun)
-        - 'ra'       Right ascention (degrees)
-        - 'dec'      Declination (degrees)
-        - 'sy_vmag'  Host's V magnitude
-    output_csv: String
-        Output filename where to save the resuls (as CSV)
-        - planet               Target name
-        - teff                 Host's effective temperature (K)
-        - r_star               Host's radius (R_sun)
-        - m_star               Host's mass (R_sun)
-        - ra                   Right ascention (degrees)
-        - dec                  Declination (degrees)
-        - V_mag                Host's V magnitude
-        - NUV_mean_flux        Mean flux in NUV band (erg s-1 cm-2 A-1)
-        - NUV_max_flux         Maximum flux in NUV band (erg s-1 cm-2 A-1)
-        - NUV_mean_snr         Mean SNR in NUV band
-        - NUV_max_snr          Maximum SNR in NUV band
-        - NUV_transit_uncert   NUV transit uncertainty
-        - VIS_mean_flux        Mean flux in VIS band (erg s-1 cm-2 A-1)
-        - VIS_max_flux         Maximum flux in VIS band (erg s-1 cm-2 A-1)
-        - VIS_mean_snr         Mean SNR in VIS band
-        - VIS_max_snr          Maximum SNR in VIS band
-        - VIS_transit_uncert   VIS transit uncertainty
-        - NIR_mean_flux        Mean flux in NIR band (erg s-1 cm-2 A-1)
-        - NIR_max_flux         Maximum flux in NIR band (erg s-1 cm-2 A-1)
-        - NIR_snr              SNR in NIR band
-        - NIR_transit_uncert   NIR transit uncertainty
-    TBD
-
-    Notes
-    -----
-    Can also be run from the command line, e.g.:
-    waltz target_list_20250327.csv waltzer_snr.csv
-
-    Example (TBD while we build this machine)
-    -------
-    >>> import snr_waltzer as w
-    >>> from waltzer_etc.snr_waltzer import *
-    >>> from waltzer_etc.utils import ROOT
-    >>> import waltzer_etc.sed as sed
-    >>> diameter = 35.0
-    >>> csv_file = 'target_list_20250327.csv'
-    >>> efficiency = 0.6
-    >>> t_dur = 2.5
-    >>> n_obs = 10
-    """
-    # The three amigos
-    nuv_det = Detector('nuv', diameter)
-    vis_det = Detector('vis', diameter)
-    nir_det = Detector('nir', diameter)
-    detectors = nuv_det, vis_det, nir_det
-    bands = [det.band for det in detectors]
-
-    # WALTzER resolution (FWHM) and wavelength grid (angstrom)
-    inst_resolution = vis_det.resolution
-
-    # Higher resolution for models (will be bin down to WALTzER)
-    resolution = 60_000.0
-    wl = ps.constant_resolution_spectrum(2_350, 20_000, resolution=resolution)
-
-    # Target list file path
-    data = pd.read_csv(csv_file, delimiter=',', comment='#')
-    ntargets = len(data)
-
-    # Extract required columns into individual arrays
-    planet_names = data['pl_name']
-    transit_dur = data['pl_trandur']
-    stellar_temps = data['st_teff']
-    stellar_radii = data['st_rad']
-    stellar_masses = data['st_mass']
-    ra = data['ra']
-    dec = data['dec']
-    v_mags = data['sy_vmag']
-
-    # Total in-transit exposure time (s) [for .csv statistics]
-    if t_dur is None:
-        # Use CSV data for each target
-        exp_time = (transit_dur * 3600) * efficiency
-    else:
-        # Use fixed transit duration for all targets
-        exp_time = (t_dur * 3600) * efficiency
-        exp_time = np.tile(exp_time, ntargets)
-
-    # Read models files
-    cache_seds = {}
-    output_data = []
-    spectra = {}
-    print('Target  Name           V_mag   Teff       NUV     VIS     NIR error (ppm)')
-    for i in range(ntargets):
-        target = planet_names[i]
-        # Load SED model spectrum based on temperature
-        teff = stellar_temps[i]
-        sed_file, teff_match = sed.find_closest_teff(teff)
-        if sed_file in cache_seds:
-            sed_flux = cache_seds[sed_file]
-        else:
-            # Load SED flux
-            sed_wl, flux = sed.load_sed(file=sed_file)
-            # Interpolate to regular grid and apply waltzer resolution
-            flux = np.interp(wl, sed_wl, flux)
-            sed_flux = inst_convolution(
-                wl, flux, inst_resolution, sampling_res=resolution,
-            )
-            cache_seds[sed_file] = sed_flux
-
-        # Normalize according to Vmag
-        flux = sed.normalize_vega(wl, sed_flux, v_mags[i])
-
-        # Flux stats
-        nuv_flux_stats = nuv_det.flux_stats(wl, flux)
-        vis_flux_stats = vis_det.flux_stats(wl, flux)
-        nir_flux_stats = nir_det.flux_stats(wl, flux)
-
-        # SNR stats
-        integ_time = exp_time[i] * n_obs
-        nuv_snr_stats = nuv_det.snr_stats(wl, flux, integ_time)
-        vis_snr_stats = vis_det.snr_stats(wl, flux, integ_time)
-        nir_snr_stats = nir_det.snr_stats(wl, flux, integ_time)[1:]
-        print(
-            f'{i+1:2d}/{ntargets}: {repr(target):15} '
-            f'{v_mags[i]:5.2f}  {teff_match:5.0f}  '
-            f'{nuv_snr_stats[-1]:8.1f}  {vis_snr_stats[-1]:6.1f}  '
-            f'{nir_snr_stats[-1]:6.1f}'
-        )
-
-        # Note this should mirror GUI's run_waltzer()
-        tso = {}
-        for j,det in enumerate(detectors):
-            band = det.band
-            # Source flux and variance in e- per second:
-            variances = det.calc_noise(wl, flux)
-            total_variance = np.sum(variances, axis=0)
-            band_flux = variances[0]
-            tso[band] = {
-                'wl': det.wl * pc.A / pc.um,
-                'flux': band_flux,
-                'variance': total_variance,
-                'variances': variances,
-                'det_type': det.mode,
-                'half_widths': det.half_widths * pc.A / pc.um,
-                'wl_min': det.wl_min * pc.A / pc.um,
-                'wl_max': det.wl_max * pc.A / pc.um,
-            }
-
-        tso['meta'] = {
-            'bands': bands,
-            'efficiency': efficiency,
-            'n_obs': n_obs,
-            'transit_dur': transit_dur[i],
-            'target': target,
-        }
-
-        spectra[target] = tso
-
-        # Save results
-        output_data.append([
-            planet_names[i],
-            stellar_temps[i],
-            stellar_radii[i],
-            stellar_masses[i],
-            ra[i],
-            dec[i],
-            v_mags[i],
-            transit_dur[i],
-            *nuv_flux_stats,
-            *nuv_snr_stats,
-            *vis_flux_stats,
-            *vis_snr_stats,
-            *nir_flux_stats,
-            *nir_snr_stats,
-        ])
-
-    # Save result as CSV file
-    header = (
-        "target, teff, r_star, m_star, ra, dec, V_mag, transit_dur,"
-        "NUV_mean_flux, NUV_max_flux,"
-        "NUV_mean_snr, NUV_max_snr, NUV_transit_uncert, "
-        "VIS_mean_flux, VIS_max_flux, "
-        "VIS_mean_snr, VIS_max_snr, VIS_transit_uncert, "
-        "NIR_mean_flux, NIR_max_flux, NIR_snr, NIR_transit_uncert "
-    ).split(',')
-    header = [h.strip() for h in header]
-    units = (
-        "#name, K, R_sun, M_sun, deg, deg, , h,"
-        "erg s-1 cm-2 A-1, erg s-1 cm-2 A-1, , , ppm,"
-        "erg s-1 cm-2 A-1, erg s-1 cm-2 A-1, , , ppm,"
-        "erg s-1 cm-2 A-1, erg s-1 cm-2 A-1, , ppm"
-    ).split(',')
-
-    with open(output_csv, 'w') as f:
-        # Telemetry and stats info
-        f.write(f"# primary diameter: {diameter} cm\n")
-        f.write(f"# duty-cycle efficiency: {efficiency}\n")
-        f.write(f"# instrumental resolution = lambda/FWHM = {inst_resolution}\n")
-
-        f.write("#\n# SNR stats are per HWHM! resolving element\n")
-        f.write(f"# Number of transits (for stats): {n_obs}\n")
-        if t_dur is None:
-            f.write("# total in-transit time (for stats): see 'transit_dur' column\n")
-        else:
-            f.write(f"# total in-transit time (for stats): {t_dur} h\n")
-
-        f.write("#\n# Wavelength ranges per band (angstrom)\n")
-        f.write(f"# NUV  {nuv_det.wl_min} {nuv_det.wl_max}\n")
-        f.write(f"# VIS  {vis_det.wl_min} {vis_det.wl_max}\n")
-        f.write(f"# NIR  {nir_det.wl_min} {nir_det.wl_max}\n#\n")
-        f.write(','.join(header) + '\n')
-        f.write(', '.join(units) + '\n')
-        np.savetxt(f, output_data, delimiter=",", fmt="%s")
-
-    p_file = output_csv.replace('.csv', '.pickle')
-    with open(p_file, 'wb') as handle:
-        pickle.dump(spectra, handle, protocol=4)

@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Patricio Cubillos and A. G. Sreejith
+# Copyright (c) 2025-2026 Patricio Cubillos and A. G. Sreejith
 # WALTzER is open-source software under the GPL-2.0 license (see LICENSE)
 
 import json
@@ -23,8 +23,8 @@ from waltzer_etc.utils import ROOT as ROOT
 from waltzer_etc.utils import inst_convolution
 import waltzer_etc as waltz
 import waltzer_etc.sed as sed
-# TBD waltzer.app_utils
-from app_utils import (
+from gui_utils import (
+    make_sed_catalog,
     get_throughput,
     get_auto_sed,
     planet_model_name,
@@ -43,7 +43,7 @@ from app_utils import (
     fetch_gaia_targets,
 )
 # TBD proper import local file
-from viewer_popovers import (
+from gui_popovers import (
     depth_units,
     wl_scales,
     flux_scales,
@@ -51,7 +51,7 @@ from viewer_popovers import (
     tso_choices,
 )
 
-import plotly_interface as plt
+import gui_plotly as plt
 
 bins = np.arange(6000, 0, -1)
 resolutions = 6000.0 / bins
@@ -102,7 +102,7 @@ def quick_snr(tso, t_in, t_out=None, depth=0.0):
         t_error.append(transit_depth_error/pc.ppm)
 
         # Time-integrated SNR on the stellar flux
-        signal = flux_in*t_in + flux_out*t_out 
+        signal = flux_in*t_in + flux_out*t_out
         snr.append(signal/np.sqrt(var_out))
 
     return snr, t_error
@@ -142,22 +142,24 @@ catalog, is_jwst, is_transit, is_confirmed = load_catalog()
 nplanets = len(catalog.targets)
 
 # Catalog of stellar SEDs:
-sed_dict = {}
-for sed_type in sed.get_sed_types():
-    sed_keys, sed_models = sed.get_sed_list()
-    sed_dict[sed_type] = {
-        key: model
-        for key,model in zip(sed_keys, sed_models)
-    }
+sed_choices = {
+    "llmodels": "llmodels",
+    "phoenix": "phoenix",
+    #"k93models": "kurucz (k93models)",
+    "bt_settl": "BT-Settl MLT (bt_settl)",
+    #"blackbody": "blackbody",
+    "input": "input",
+}
+sed_catalog, sed_dict = make_sed_catalog()
 
 
 # Higher resolution for models (will be bin down to WALTzER)
 resolution = 45_000.0
-wl = ps.constant_resolution_spectrum(2_400, 20_000, resolution=resolution)
-wl_micron = wl * pc.A/pc.um
+wl = ps.constant_resolution_spectrum(0.23, 2.0, resolution=resolution)
 # WALTzER's resolution
-inst_resolution = 3000.0
+inst_resolution = detectors['vis'].resolution
 cache_seds = {}
+
 
 def waltz_model(wl_model, depth):
     """
@@ -165,31 +167,41 @@ def waltz_model(wl_model, depth):
     """
     # interpolate
     interp_depth = np.interp(
-        wl_micron, wl_model, depth, left=np.nan, right=np.nan,
+        wl, wl_model, depth, left=np.nan, right=np.nan,
     )
     waltzer_depth = inst_convolution(
-        wl_micron, interp_depth, inst_resolution, sampling_res=resolution,
+        wl, interp_depth, inst_resolution, sampling_res=resolution,
         mode='valid',
     )
-    edge = (wl_micron.size - waltzer_depth.size) // 2
-    waltzer_wl = wl_micron[edge:-edge]
+    edge = (wl.size - waltzer_depth.size) // 2
+    waltzer_wl = wl[edge:-edge]
     return waltzer_wl, waltzer_depth
 
 
-def load_sed(sed_model, cache_seds):
+
+def load_sed(sed_model, sed_type, cache_seds):
     """
     load SED wrapper with cache'd files.
     """
     if sed_model in cache_seds:
         sed_flux = cache_seds[sed_model]
     else:
-        sed_wl, flux = sed.load_sed(file=sed_model)
+        if sed_type == 'input':
+            sed_wl = spectra['sed'][sed_model]['wl']
+            flux = spectra['sed'][sed_model]['flux']
+        else:
+            teff = sed_catalog[sed_model]['teff']
+            logg = sed_catalog[sed_model]['logg']
+            sed_type = sed_catalog[sed_model]['sed_type']
+            sed_wl, flux = sed.load_sed(teff, logg, sed_type)
+
         flux = np.interp(wl, sed_wl, flux)
         sed_flux = inst_convolution(
             wl, flux, inst_resolution, sampling_res=resolution,
         )
         cache_seds[sed_model] = sed_flux
     return sed_flux
+
 
 # SED normalization band
 band_name = 'johnson,v'
@@ -278,6 +290,18 @@ layout_kwargs = dict(
     class_="pb-2 pt-0 m-0",
 )
 
+welcome = f"""\
+To update:
+
+- cd into the `waltzer_etc/` folder containing `pyproject.toml`
+- then run these commands:
+```shell
+git pull origin main
+pip install -e .
+```
+"""
+
+card_style = "background:#F5F5F5; !important;"
 
 app_ui = ui.page_fluid(
     # ESA Sky
@@ -324,12 +348,6 @@ app_ui = ui.page_fluid(
         .popover {
             --bs-popover-max-width: 500px;
         }
-        .my-well > * {
-            margin-bottom: 5px;
-        }
-        .my-well > *:last-child {
-            margin-bottom: 15px;
-        }
         """
     ),
     ui.layout_columns(
@@ -358,123 +376,122 @@ app_ui = ui.page_fluid(
         # The target
         custom_card(
             ui.card_header("Target", class_="bg-primary"),
-            ui.panel_well(
-                # a hidden section to hold switches for other conditionals
-                ui.panel_conditional(
-                    'false',
-                    ui.input_switch(
-                        id="is_candidate",
-                        label="candidate",
-                        value=False,
-                    ),
-                    ui.input_switch(
-                        id="has_sed_bookmarks",
-                        label="has SED",
-                        value=False,
-                    ),
-                    ui.input_switch(
-                        id="has_depth_bookmarks",
-                        label="has transits",
-                        value=False,
-                    ),
-                ),
-                ui.popover(
-                    ui.span(
-                        fa.icon_svg("gear"),
-                        style="position:absolute; top: 5px; right: 7px;",
-                    ),
-                    ui.input_checkbox_group(
-                        id="target_filter",
-                        label='',
-                        choices={
-                            "transit": "transiting",
-                            "jwst": "JWST targets",
-                            "tess": "TESS candidates",
-                            "non_transit": "non-transiting",
-                        },
-                        selected=['jwst', 'transit'],
-                    ),
-                    title='Filter targets',
-                    placement="right",
-                    id="targets_popover",
-                ),
-                ui.span(
-                    ui.HTML('<b>Target</b> '),
-                    ui.tooltip(
-                        ui.input_action_link(
-                            id='show_info',
-                            label='',
-                            icon=fa.icon_svg("circle-info", fill='cornflowerblue'),
-                        ),
-                        'System info',
-                        id='target_info_tooltip',
-                        placement='top',
-                    ),
-                    #url has to be set with javascript, output_ui does not render nicely, ui.input_action_link() does not open in server side.
-                    ui.tooltip(
-                        ui.tags.a(
-                            fa.icon_svg("circle-info", fill='black'),
-                            id='nasa_link',
-                            href=f'{nasa_url}',
-                            target="_blank",
-                        ),
-                        "Open target's NASA Exoplanet Archive",
-                        id='nasa_tooltip',
-                        placement='top',
-                    ),
-                    ui.tooltip(
-                        ui.input_action_link(
-                            id='show_observations',
-                            label='',
-                            icon=fa.icon_svg("circle-info", fill='gray'),
-                        ),
-                        'not a JWST target (yet)',
-                        id='jwst_tooltip',
-                        placement='top',
-                    ),
-                    ui.panel_conditional(
-                        "input.is_candidate",
-                        ui.tooltip(
-                            fa.icon_svg("triangle-exclamation", fill='darkorange'),
-                            ui.markdown("This is a *candidate* planet"),
-                            placement='top',
-                        ),
-                    ),
-                ),
-                ui.input_selectize(
-                    id='target',
-                    label='',
-                    choices=[target.planet for target in catalog.targets],
-                    selected='WASP-80 b',
-                    multiple=False,
-                ),
-                # Target props
-                ui.layout_column_wrap(
-                    # Row 1
-                    ui.HTML("<p>T<sub>eff</sub> (K):</p>"),
-                    ui.input_numeric("t_eff", "", value='1400.0'),
-                    # Row 2
-                    ui.p("log(g):"),
-                    ui.input_numeric("log_g", "", value='4.5'),
-                    # Row 3
-                    ui.p("V magnitude:"),
-                    ui.input_numeric(
-                        id="magnitude",
-                        label="",
-                        value='10.0',
-                    ),
-                    width=1/2,
-                    fixed_width=False,
-                    heights_equal='all',
-                    gap='7px',
-                    fill=False,
-                    fillable=True,
-                ),
-                ui.span(
-                    ui.HTML('<b>Stellar SED</b> '),
-                    # upload (hidden for now)
+            ui.card(
+                ui.card_body(
+                    # a hidden section to hold switches for other conditionals
                     ui.panel_conditional(
                         'false',
+                        ui.input_switch(
+                            id="is_candidate",
+                            label="candidate",
+                            value=False,
+                        ),
+                        ui.input_switch(
+                            id="has_sed_bookmarks",
+                            label="has SED",
+                            value=False,
+                        ),
+                        ui.input_switch(
+                            id="has_depth_bookmarks",
+                            label="has transits",
+                            value=False,
+                        ),
+                    ),
+                    ui.popover(
+                        ui.span(
+                            fa.icon_svg("gear"),
+                            style="position:absolute; top: 5px; right: 7px;",
+                        ),
+                        ui.input_checkbox_group(
+                            id="target_filter",
+                            label='',
+                            choices={
+                                "transit": "transiting",
+                                "jwst": "JWST targets",
+                                "tess": "TESS candidates",
+                                "non_transit": "non-transiting",
+                            },
+                            selected=['jwst', 'transit'],
+                        ),
+                        title='Filter targets',
+                        placement="right",
+                        id="targets_popover",
+                    ),
+                    ui.span(
+                        ui.HTML('<b>Target</b> '),
+                        ui.tooltip(
+                            ui.input_action_link(
+                                id='show_info',
+                                label='',
+                                icon=fa.icon_svg("circle-info", fill='cornflowerblue'),
+                            ),
+                            'System info',
+                            id='target_info_tooltip',
+                            placement='top',
+                        ),
+                        #url has to be set with javascript, output_ui does not render nicely, ui.input_action_link() does not open in server side.
+                        ui.tooltip(
+                            ui.tags.a(
+                                fa.icon_svg("circle-info", fill='black'),
+                                id='nasa_link',
+                                href=f'{nasa_url}',
+                                target="_blank",
+                            ),
+                            "Open target's NASA Exoplanet Archive",
+                            id='nasa_tooltip',
+                            placement='top',
+                        ),
+                        ui.tooltip(
+                            ui.input_action_link(
+                                id='show_observations',
+                                label='',
+                                icon=fa.icon_svg("circle-info", fill='gray'),
+                            ),
+                            'not a JWST target (yet)',
+                            id='jwst_tooltip',
+                            placement='top',
+                        ),
+                        ui.panel_conditional(
+                            "input.is_candidate",
+                            ui.tooltip(
+                                fa.icon_svg("triangle-exclamation", fill='darkorange'),
+                                ui.markdown("This is a *candidate* planet"),
+                                placement='top',
+                            ),
+                        ),
+                    ),
+                    ui.input_selectize(
+                        id='target',
+                        label='',
+                        choices=[target.planet for target in catalog.targets],
+                        selected='HD 209458 b',
+                        multiple=False,
+                    ),
+                    # SED properties
+                    ui.layout_column_wrap(
+                        # Row 1
+                        ui.HTML("<p>T<sub>eff</sub> (K):</p>"),
+                        ui.input_numeric("t_eff", "", value='1400.0'),
+                        # Row 2
+                        ui.p("log(g):"),
+                        ui.input_numeric("log_g", "", value='4.5'),
+                        # Row 3
+                        ui.p("V magnitude:"),
+                        ui.input_numeric(
+                            id="magnitude",
+                            label="",
+                            value='10.0',
+                        ),
+                        width=1/2,
+                        fixed_width=False,
+                        heights_equal='all',
+                        gap='7px',
+                        fill=False,
+                        fillable=True,
+                    ),
+                    ui.span(
+                        ui.HTML('<b>Stellar SED</b> '),
+                        # upload (hidden for now)
                         ui.tooltip(
                             ui.input_action_link(
                                 id='upload_sed',
@@ -485,215 +502,213 @@ app_ui = ui.page_fluid(
                             id='sed_up_tooltip',
                             placement='top',
                         ),
-                        class_="p-0 m-0",
-                    ),
-                    # bookmarks
-                    ui.tooltip(
-                        ui.input_action_link(
-                            id='bookmark_sed',
-                            label='',
-                            icon=fa.icon_svg("star", style='regular', fill='black'),
-                        ),
-                        'Bookmark SED',
-                        id='sed_book_tooltip',
-                        placement='top',
-                    ),
-                    # clear
-                    ui.panel_conditional(
-                        "input.has_sed_bookmarks",
+                        # bookmarks
                         ui.tooltip(
                             ui.input_action_link(
-                                id='clear_sed_bookmarks',
+                                id='bookmark_sed',
                                 label='',
-                                icon=fa.icon_svg("circle-xmark", style='regular', fill='black'),
+                                icon=fa.icon_svg("star", style='regular', fill='black'),
                             ),
-                            'Clear all SED bookmarks',
-                            id='sed_clear_tooltip',
+                            'Bookmark SED',
+                            id='sed_book_tooltip',
                             placement='top',
                         ),
+                        # clear
+                        ui.panel_conditional(
+                            "input.has_sed_bookmarks",
+                            ui.tooltip(
+                                ui.input_action_link(
+                                    id='clear_sed_bookmarks',
+                                    label='',
+                                    icon=fa.icon_svg("circle-xmark", style='regular', fill='black'),
+                                ),
+                                'Clear all SED bookmarks',
+                                id='sed_clear_tooltip',
+                                placement='top',
+                            ),
+                        ),
                     ),
-                ),
-                ui.panel_conditional(
-                    "input.is_candidate",
                     ui.input_select(
                         id="sed_type",
                         label='',
-                        choices={
-                            "waltzer": "waltzer",
-                            "phoenix": "phoenix",
-                            "k93models": "kurucz (k93models)",
-                            "bt_settl": "BT-Settl MLT (bt_settl)",
-                            "blackbody": "blackbody",
-                            "input": "input",
-                        },
-                        selected=list(sed_dict)[0],
+                        choices=sed_choices,
+                        selected=list(sed_choices)[0],
                     ),
+                    ui.input_select(
+                        id="sed",
+                        label="",
+                        choices=sed_dict[list(sed_choices)[0]],
+                    ),
+                    fill=False,
+                    style=card_style,
+                    class_="px-2 pt-2 pb-0 m-0 gap-2",
                 ),
-                ui.input_select(
-                    id="sed",
-                    label="",
-                    choices=sed_dict['waltzer'],
-                    selected='g0v',
-                ),
-                class_="px-2 pt-2 pb-0 m-0",
+                class_="p-0 pb-1 m-0",
+                fill=False,
             ),
             # The planet
-            ui.panel_well(
-                ui.popover(
+            ui.card(
+                ui.card_body(
+                    ui.popover(
+                        ui.span(
+                            fa.icon_svg("gear"),
+                            style="position:absolute; top: 5px; right: 7px;",
+                        ),
+                        ui.markdown(
+                            '*T*<sub>dur</sub> = '
+                            '*T*<sub>settle</sub> + *T*<sub>base</sub> + '
+                            '*T*<sub>tran</sub> + *T*<sub>base</sub>',
+                        ),
+                        ui.markdown(
+                            'Start time window (*T*<sub>start</sub>): 1h',
+                        ),
+                        ui.input_numeric(
+                            id="settling_time",
+                            label=ui.markdown(
+                                'Settling time (*T*<sub>settle</sub>, h):',
+                            ),
+                            value = 0.0,
+                            step = 0.25,
+                        ),
+                        ui.input_numeric(
+                            id="baseline_time",
+                            label=ui.markdown(
+                                'Baseline time (*T*<sub>base</sub>, t_dur):',
+                            ),
+                            value = 0.5,
+                            step = 0.25,
+                        ),
+                        ui.input_numeric(
+                            id="min_baseline_time",
+                            label='Minimum baseline time (h):',
+                            value = 1.0,
+                            step = 0.25,
+                        ),
+                        title='Observation duration',
+                        placement="right",
+                        id="obs_popover",
+                    ),
+                    ui.markdown("**Observation**"),
+                    ui.layout_column_wrap(
+                        # Row 1
+                        ui.p("Type:"),
+                        ui.input_select(
+                            id='obs_geometry',
+                            label='',
+                            choices={
+                                'transit': 'Transit',
+                                'eclipse': 'Eclipse',
+                            }
+                        ),
+                        # Row 2
+                        ui.output_text('transit_dur_label'),
+                        ui.input_numeric("t_dur", "", value='2.0', step=0.1),
+                        # Row 3
+                        ui.p("Obs_dur (h):"),
+                        ui.input_numeric("obs_dur", "", value='5.0', step=0.25),
+                        width=1/2,
+                        fixed_width=False,
+                        heights_equal='all',
+                        gap='7px',
+                        fill=False,
+                        fillable=True,
+                    ),
                     ui.span(
-                        fa.icon_svg("gear"),
-                        style="position:absolute; top: 5px; right: 7px;",
-                    ),
-                    ui.markdown(
-                        '*T*<sub>dur</sub> = '
-                        '*T*<sub>settle</sub> + *T*<sub>base</sub> + '
-                        '*T*<sub>tran</sub> + *T*<sub>base</sub>',
-                    ),
-                    ui.markdown(
-                        'Start time window (*T*<sub>start</sub>): 1h',
-                    ),
-                    ui.input_numeric(
-                        id="settling_time",
-                        label=ui.markdown(
-                            'Settling time (*T*<sub>settle</sub>, h):',
-                        ),
-                        value = 0.0,
-                        step = 0.25,
-                    ),
-                    ui.input_numeric(
-                        id="baseline_time",
-                        label=ui.markdown(
-                            'Baseline time (*T*<sub>base</sub>, t_dur):',
-                        ),
-                        value = 0.5,
-                        step = 0.25,
-                    ),
-                    ui.input_numeric(
-                        id="min_baseline_time",
-                        label='Minimum baseline time (h):',
-                        value = 1.0,
-                        step = 0.25,
-                    ),
-                    title='Observation duration',
-                    placement="right",
-                    id="obs_popover",
-                ),
-                ui.markdown("**Observation**"),
-                ui.layout_column_wrap(
-                    # Row 1
-                    ui.p("Type:"),
-                    ui.input_select(
-                        id='obs_geometry',
-                        label='',
-                        choices={
-                            'transit': 'Transit',
-                            'eclipse': 'Eclipse',
-                        }
-                    ),
-                    # Row 2
-                    ui.output_text('transit_dur_label'),
-                    ui.input_numeric("t_dur", "", value='2.0', step=0.1),
-                    # Row 3
-                    ui.p("Obs_dur (h):"),
-                    ui.input_numeric("obs_dur", "", value='5.0', step=0.25),
-                    width=1/2,
-                    fixed_width=False,
-                    heights_equal='all',
-                    gap='7px',
-                    fill=False,
-                    fillable=True,
-                ),
-                ui.span(
-                    ui.output_ui('depth_label'),
-                    # upload
-                    ui.tooltip(
-                        ui.input_action_link(
-                            id='upload_depth',
-                            label='',
-                            icon=fa.icon_svg("file-arrow-up", fill='black'),
-                        ),
-                        "Upload depth model",
-                        id='depth_up_tooltip',
-                        placement='top',
-                    ),
-                    # bookmarks
-                    ui.tooltip(
-                        ui.input_action_link(
-                            id='bookmark_depth',
-                            label='',
-                            icon=fa.icon_svg("earth-americas", style='solid', fill='gray')
-                        ),
-                        'Bookmark depth model',
-                        id='depth_book_tooltip',
-                        placement='top',
-                    ),
-                    # clear
-                    ui.panel_conditional(
-                        "input.has_depth_bookmarks",
+                        ui.output_ui('depth_label'),
+                        # upload
                         ui.tooltip(
                             ui.input_action_link(
-                                id='clear_depth_bookmarks',
+                                id='upload_depth',
                                 label='',
-                                icon=fa.icon_svg("circle-xmark", style='regular', fill='black'),
+                                icon=fa.icon_svg("file-arrow-up", fill='black'),
                             ),
-                            'Clear all depth bookmarks',
-                            id='depth_clear_tooltip',
+                            "Upload depth model",
+                            id='depth_up_tooltip',
                             placement='top',
                         ),
-                    ),
-                ),
-                ui.input_select(
-                    id="planet_model_type",
-                    label="",
-                    choices=["Input"],
-                ),
-                ui.panel_conditional(
-                    "input.planet_model_type == 'Input'",
-                    ui.tooltip(
-                        ui.input_select(
-                            id="depth",
-                            label="",
-                            choices=list(spectra['transit']),
+                        # bookmarks
+                        ui.tooltip(
+                            ui.input_action_link(
+                                id='bookmark_depth',
+                                label='',
+                                icon=fa.icon_svg("earth-americas", style='solid', fill='gray')
+                            ),
+                            'Bookmark depth model',
+                            id='depth_book_tooltip',
+                            placement='top',
                         ),
-                        '',
-                        id='depth_tooltip',
-                        placement='right',
-                    ),
-                ),
-                ui.panel_conditional(
-                    "input.planet_model_type == 'Flat'",
-                    ui.layout_column_wrap(
-                        ui.p("Depth (%):"),
-                        ui.input_numeric(
-                            id="transit_depth",
-                            label="",
-                            value=0.5,
-                            step=0.1,
+                        # clear
+                        ui.panel_conditional(
+                            "input.has_depth_bookmarks",
+                            ui.tooltip(
+                                ui.input_action_link(
+                                    id='clear_depth_bookmarks',
+                                    label='',
+                                    icon=fa.icon_svg("circle-xmark", style='regular', fill='black'),
+                                ),
+                                'Clear all depth bookmarks',
+                                id='depth_clear_tooltip',
+                                placement='top',
+                            ),
                         ),
-                        **layout_kwargs,
                     ),
-                ),
-                ui.panel_conditional(
-                    "input.planet_model_type == 'Blackbody'",
-                    ui.layout_column_wrap(
-                        ui.HTML("<p>(Rp/Rs)<sup>2</sup> (%):</p>"),
-                        ui.input_numeric(
-                            id="eclipse_depth",
-                            label="",
-                            value=0.05,
-                            step=0.1,
-                        ),
-                        ui.p("Temp (K):"),
-                        ui.input_numeric(
-                            id="teq_planet",
-                            label="",
-                            value=2000.0,
-                            step=100,
-                        ),
-                        **layout_kwargs,
+                    ui.input_select(
+                        id="planet_model_type",
+                        label="",
+                        choices=["Input"],
                     ),
+                    ui.panel_conditional(
+                        "input.planet_model_type == 'Input'",
+                        ui.tooltip(
+                            ui.input_select(
+                                id="depth",
+                                label="",
+                                choices=list(spectra['transit']),
+                            ),
+                            '',
+                            id='depth_tooltip',
+                            placement='right',
+                        ),
+                    ),
+                    ui.panel_conditional(
+                        "input.planet_model_type == 'Flat'",
+                        ui.layout_column_wrap(
+                            ui.p("Depth (%):"),
+                            ui.input_numeric(
+                                id="transit_depth",
+                                label="",
+                                value=0.5,
+                                step=0.1,
+                            ),
+                            **layout_kwargs,
+                        ),
+                    ),
+                    ui.panel_conditional(
+                        "input.planet_model_type == 'Blackbody'",
+                        ui.layout_column_wrap(
+                            ui.HTML("<p>(Rp/Rs)<sup>2</sup> (%):</p>"),
+                            ui.input_numeric(
+                                id="eclipse_depth",
+                                label="",
+                                value=0.05,
+                                step=0.1,
+                            ),
+                            ui.p("Temp (K):"),
+                            ui.input_numeric(
+                                id="teq_planet",
+                                label="",
+                                value=2000.0,
+                                step=100,
+                            ),
+                            **layout_kwargs,
+                        ),
+                    ),
+                    fill=False,
+                    style=card_style,
+                    class_="px-2 pt-2 pb-0 m-0 gap-2",
                 ),
-                class_="px-2 pt-2 pb-0 m-0",
+                class_="p-0 m-0",
+                fill=False,
             ),
             body_args=dict(class_="p-2 m-0"),
         ),
@@ -706,277 +721,307 @@ app_ui = ui.page_fluid(
                 class_="bg-primary",
             ),
             # filter
-            ui.panel_well(
-                ui.input_checkbox_group(
-                    id="bands",
-                    label=ui.markdown('**Bands**'),
-                    choices = {
-                        "nuv": "NUV (0.24-0.32 um)",
-                        "vis": "VIS (0.42-0.80 um)",
-                        "nir": "NIR (0.90-1.60 um)",
-                    },
-                    selected=['nuv', 'vis', 'nir'],
+            ui.card(
+                ui.card_body(
+                    ui.input_checkbox_group(
+                        id="bands",
+                        label=ui.markdown('**Bands**'),
+                        choices = {
+                            "nuv": "NUV (0.24-0.32 um)",
+                            "vis": "VIS (0.42-0.80 um)",
+                            "nir": "NIR (0.90-1.60 um)",
+                        },
+                        selected=['nuv', 'vis', 'nir'],
+                    ),
+                    ui.input_numeric(
+                        id="efficiency",
+                        label="Efficiency (%)",
+                        value=60.0,
+                        min=0.0,
+                        max=100.0,
+                        step=0.5,
+                    ),
+                    ui.input_numeric(
+                        id="n_obs",
+                        label="Number of observations",
+                        value=3,
+                        min=1,
+                        max=50,
+                        step=1,
+                    ),
+                    style=card_style,
+                    class_="px-2 pt-1 pb-2 m-0 gap-3",
+                    fill=False,
                 ),
-                ui.input_numeric(
-                    id="efficiency",
-                    label="Efficiency (%)",
-                    value=60.0,
-                    min=0.0,
-                    max=100.0,
-                    step=0.5,
-                ),
-                ui.input_numeric(
-                    id="n_obs",
-                    label="Number of observations",
-                    value=3,
-                    min=1,
-                    max=50,
-                    step=1,
-                ),
-                class_="px-2 pt-2 pb-0 m-0",
+                fill=False,
+                class_="p-0 m-0",
             ),
             # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
             # The plots setup
-            ui.panel_well(
-                ui.markdown("**Plots**"),
-                ui.panel_conditional(
-                    "input.tab === 'Stellar SED'",
-                    ui.layout_column_wrap(
-                        'Resolution:',
-                        ui.input_numeric(
-                            id='plot_sed_resolution',
-                            label='',
-                            value=0.0,
-                            min=0.0, max=6000.0, step=50.0,
-                        ),
-                        "Flux scale:",
-                        ui.input_select(
-                            id="plot_sed_yscale",
-                            label="",
-                            choices=flux_scales,
-                            selected='linear',
-                        ),
-                        width=1/2,
-                        fixed_width=False,
-                        heights_equal='all',
-                        gap='5px',
-                        fill=False,
-                        fillable=True,
-                        class_="p-0 pb-1 m-0",
+            ui.card(
+                ui.card_body(
+                    ui.markdown("**Plots**"),
+                    ui.panel_conditional(
+                        "input.tab === 'Stellar SED'",
+                        ui.layout_column_wrap(
+                            'Resolution:',
+                            ui.input_numeric(
+                                id='plot_sed_resolution',
+                                label='',
+                                value=0.0,
+                                min=0.0, max=6000.0, step=50.0,
+                            ),
+                            "Flux scale:",
+                            ui.input_select(
+                                id="plot_sed_yscale",
+                                label="",
+                                choices=flux_scales,
+                                selected='linear',
+                            ),
+                            width=1/2,
+                            fixed_width=False,
+                            heights_equal='all',
+                            gap='5px',
+                            fill=False,
+                            fillable=True,
+                            class_="p-0 pb-1 m-0",
 
-                    ),      
-                    "Wavelength:",
-                    ui.layout_column_wrap(
-                        ui.input_numeric(
-                            id='sed_wl_min', label='',
-                            value=0.23, min=0.2, max=30.0, step=0.02,
-                        ),
-                        ui.input_numeric(
-                            id='sed_wl_max', label='',
-                            value=2.0, min=0.2, max=30.0, step=0.1,
-                        ),
-                        ui.input_select(
-                            id='plot_sed_xscale',
-                            label='',
-                            choices=wl_scales,
-                            selected='log',
-                        ),
-                        width=1/3,
-                        fixed_width=False,
-                        heights_equal='all',
-                        gap='5px',
-                        fill=False,
-                        fillable=True,
-                        class_="p-0 pb-2 m-0",
-                    ),      
-                    class_="p-0 m-0",
-                ),
-
-                ui.panel_conditional(
-                    "input.tab == 'transit_tab'",
-                    ui.layout_column_wrap(
-                        'Resolution:',
-                        ui.input_numeric(
-                            id='depth_resolution',
-                            label='',
-                            value=250.0,
-                            min=0.0, max=6000.0, step=50.0,
-                        ),
-                        "Depth units:",
-                        ui.input_select(
-                            id="plot_depth_units",
-                            label="",
-                            choices=depth_units,
-                            selected='percent',
-                        ),
-                        width=1/2,
-                        fixed_width=False,
-                        gap='5px',
-                        fill=False,
-                        fillable=True,
-                        class_="p-0 pb-1 m-0",
-                    ),
-                    "Wavelength:",
-                    ui.layout_column_wrap(
-                        ui.input_numeric(
-                            id='depth_wl_min', label='',
-                            value=0.23, min=0.2, max=30.0, step=0.02,
-                        ),
-                        ui.input_numeric(
-                            id='depth_wl_max', label='',
-                            value=2.0, min=0.2, max=30.0, step=0.1,
-                        ),
-                        ui.input_select(
-                            "plot_depth_xscale",
-                            label="",
-                            choices=wl_scales,
-                            selected='log',
-                        ),
-                        width=1/3,
-                        fixed_width=False,
-                        gap='5px',
-                        fill=False,
-                        fillable=True,
-                        class_="p-0 pb-2 m-0",
-                    ),
-                    class_="px-0 py-0 m-0",
-                ),
-
-                ui.panel_conditional(
-                    "input.tab === 'Noise'",
-                    ui.layout_column_wrap(
-                        "Display:",
-                        ui.input_select(
-                            id="noise_plot",
-                            label="",
-                            choices=noise_choices,
-                            selected='variance',
-                        ),
-                        'Resolution:',
-                        ui.input_numeric(
-                            id='noise_resolution',
-                            label='',
-                            value=0.0,
-                            min=0.0, max=6000.0, step=50.0,
                         ),
                         "Wavelength:",
-                        ui.input_select(
-                            "noise_wl_scale",
-                            label="",
-                            choices=wl_scales,
-                            selected='log',
+                        ui.layout_column_wrap(
+                            ui.input_numeric(
+                                id='sed_wl_min', label='',
+                                value=0.23, min=0.2, max=30.0, step=0.02,
+                            ),
+                            ui.input_numeric(
+                                id='sed_wl_max', label='',
+                                value=2.0, min=0.2, max=30.0, step=0.1,
+                            ),
+                            ui.input_select(
+                                id='plot_sed_xscale',
+                                label='',
+                                choices=wl_scales,
+                                selected='log',
+                            ),
+                            width=1/3,
+                            fixed_width=False,
+                            heights_equal='all',
+                            gap='5px',
+                            fill=False,
+                            fillable=True,
+                            class_="p-0 pb-2 m-0",
                         ),
-                        width=1/2,
-                        fixed_width=False,
-                        gap='5px',
-                        fill=False,
-                        fillable=True,
-                        class_="p-0 pb-1 m-0",
+                        class_="p-0 m-0",
                     ),
-                    class_="px-0 py-0 m-0",
-                ),
 
-                ui.panel_conditional(
-                    "input.tab === 'TSO'",
-                    ui.layout_column_wrap(
-                        'Display:',
-                        ui.input_select(
-                            id="tso_plot",
-                            label="",
-                            choices=tso_choices,
-                            selected='tso',
+                    ui.panel_conditional(
+                        "input.tab == 'transit_tab'",
+                        ui.layout_column_wrap(
+                            'Resolution:',
+                            ui.input_numeric(
+                                id='depth_resolution',
+                                label='',
+                                value=250.0,
+                                min=0.0, max=6000.0, step=50.0,
+                            ),
+                            "Depth units:",
+                            ui.input_select(
+                                id="plot_depth_units",
+                                label="",
+                                choices=depth_units,
+                                selected='percent',
+                            ),
+                            width=1/2,
+                            fixed_width=False,
+                            gap='5px',
+                            fill=False,
+                            fillable=True,
+                            class_="p-0 pb-1 m-0",
                         ),
-                        'Resolution:',
-                        ui.input_numeric(
-                            id='tso_resolution',
-                            label='',
-                            value=250.0,
-                            min=0.0, max=3000.0, step=25.0,
+                        "Wavelength:",
+                        ui.layout_column_wrap(
+                            ui.input_numeric(
+                                id='depth_wl_min', label='',
+                                value=0.23, min=0.2, max=30.0, step=0.02,
+                            ),
+                            ui.input_numeric(
+                                id='depth_wl_max', label='',
+                                value=2.0, min=0.2, max=30.0, step=0.1,
+                            ),
+                            ui.input_select(
+                                "plot_depth_xscale",
+                                label="",
+                                choices=wl_scales,
+                                selected='log',
+                            ),
+                            width=1/3,
+                            fixed_width=False,
+                            gap='5px',
+                            fill=False,
+                            fillable=True,
+                            class_="p-0 pb-2 m-0",
                         ),
-                        width=1/2,
-                        fixed_width=False,
-                        gap='5px',
-                        fill=False,
-                        fillable=True,
-                        class_="px-0 pb-1 m-0",
+                        class_="px-0 py-0 m-0",
                     ),
-                    "Wavelength:",
-                    ui.layout_column_wrap(
-                        ui.input_numeric(
-                            id='tso_wl_min', label='',
-                            value=None, min=0.2, max=30.0, step=0.02,
+
+                    ui.panel_conditional(
+                        "input.tab === 'Noise' || input.tab === 'TSO'",
+                        ui.layout_column_wrap(
+                            "Display:",
+                            ui.div(
+                                ui.panel_conditional(
+                                    "input.tab === 'Noise'",
+                                    ui.input_select(
+                                        id="noise_plot",
+                                        label="",
+                                        choices=noise_choices,
+                                        selected='variance',
+                                    ),
+                                    class_="px-0 py-0 m-0",
+                                ),
+                                ui.panel_conditional(
+                                    "input.tab === 'TSO'",
+                                    ui.input_select(
+                                        id="tso_plot",
+                                        label="",
+                                        choices=tso_choices,
+                                        selected='tso',
+                                    ),
+                                    class_="px-0 py-0 m-0",
+                                ),
+                            ),
+                            'Resolution:',
+                            ui.tooltip(
+                                ui.input_numeric(
+                                    id='tso_resolution',
+                                    label='',
+                                    value=0.0,
+                                    min=0.0, max=6000.0, step=50.0,
+                                ),
+                                "True resolution = 6000",
+                                id='tso_resolution_tooltip',
+                                placement='bottom',
+                            ),
+                            width=1/2,
+                            fixed_width=False,
+                            gap='0px',
+                            fill=False,
+                            fillable=True,
+                            class_="p-0 pb-1 m-0",
                         ),
-                        ui.input_numeric(
-                            id='tso_wl_max', label='',
-                            value=None, min=0.2, max=30.0, step=0.1,
+
+                        ui.panel_conditional(
+                            "input.tab === 'Noise'",
+                            ui.layout_column_wrap(
+                                "Wavelength:",
+                                ui.input_select(
+                                    "noise_wl_scale",
+                                    label="",
+                                    choices=wl_scales,
+                                    selected='log',
+                                ),
+                                width=1/2,
+                                fixed_width=False,
+                                gap='0px',
+                                fill=False,
+                                fillable=True,
+                                class_="p-0 m-0",
+                            ),
+                            class_="p-0 m-0",
                         ),
-                        ui.input_select(
-                            id="tso_wl_scale",
-                            label='',
-                            choices=wl_scales,
-                            selected='linear',
+                        ui.panel_conditional(
+                            "input.tab === 'TSO'",
+                            "Wavelength:",
+                            ui.layout_column_wrap(
+                                ui.input_numeric(
+                                    id='tso_wl_min', label='',
+                                    value=None, min=0.2, max=30.0, step=0.02,
+                                ),
+                                ui.input_numeric(
+                                    id='tso_wl_max', label='',
+                                    value=None, min=0.2, max=30.0, step=0.1,
+                                ),
+                                ui.input_select(
+                                    id="tso_wl_scale",
+                                    label='',
+                                    choices=wl_scales,
+                                    selected='linear',
+                                ),
+                                width=1/3,
+                                fixed_width=False,
+                                gap='5px',
+                                fill=False,
+                                fillable=True,
+                                class_="p-0 pb-1 m-0",
+                            ),
+                            "Depth:",
+                            ui.layout_column_wrap(
+                                ui.input_numeric(
+                                    id='tso_depth_min',
+                                    label='',
+                                    value=None,
+                                ),
+                                ui.input_numeric(
+                                    id='tso_depth_max',
+                                    label='',
+                                    value=None,
+                                ),
+                                ui.input_action_button(
+                                    id="redraw_tso",
+                                    label="Re-draw",
+                                    class_="btn btn-outline-primary btn-sm",
+                                ),
+                                width=1/3,
+                                fixed_width=False,
+                                gap='5px',
+                                fill=False,
+                                fillable=True,
+                                class_="p-0 pb-2 m-0",
+                            ),
+                            class_="px-0 py-0 m-0",
                         ),
-                        width=1/3,
-                        fixed_width=False,
-                        gap='5px',
-                        fill=False,
-                        fillable=True,
-                        class_="p-0 pb-1 m-0",
+
+                        class_="px-0 py-0 m-0",
                     ),
-                    "Depth:",
-                    ui.layout_column_wrap(
-                        ui.input_numeric(
-                            id='tso_depth_min',
-                            label='',
-                            value=None,
-                        ),
-                        ui.input_numeric(
-                            id='tso_depth_max',
-                            label='',
-                            value=None,
-                        ),
-                        ui.input_action_button(
-                            id="redraw_tso",
-                            label="Re-draw",
-                            class_="btn btn-outline-primary btn-sm",
-                        ),
-                        width=1/3,
-                        fixed_width=False,
-                        gap='5px',
-                        fill=False,
-                        fillable=True,
-                        class_="p-0 pb-2 m-0",
-                    ),
-                    class_="px-0 py-0 m-0",
+
+                    class_="px-2 py-1 pb-0 m-0 gap-0",
+                    style=card_style,
+                    fill=False,
                 ),
-                class_="my-well px-2 py-1 pb-0 m-0",
+                fill=False,
+                class_="p-0 m-0 gap-0",
             ),
             # Search nearby Gaia targets for acquisition
-            ui.panel_well(
-                ui.tooltip(
-                    ui.markdown('**FOV targets**'),
-                    'Gaia targets within 80" of science target',
-                    id="gaia_tooltip",
-                    placement="top",
-                ),
-                ui.layout_column_wrap(
-                    ui.input_task_button(
-                        id="search_gaia_ta",
-                        label="Search nearby targets",
-                        label_busy="processing...",
-                        class_='btn btn-outline-secondary btn-sm',
+            ui.card(
+                ui.card_body(
+                    ui.tooltip(
+                        ui.markdown('**FOV targets**'),
+                        'Gaia targets within 80" of science target',
+                        id="gaia_tooltip",
+                        placement="top",
                     ),
-                    ui.input_action_button(
-                        id="get_acquisition_target",
-                        label="Print target data",
-                        class_='btn btn-outline-secondary btn-sm',
+                    ui.layout_column_wrap(
+                        ui.input_task_button(
+                            id="search_gaia_ta",
+                            label="Search nearby targets",
+                            label_busy="processing...",
+                            class_='btn btn-outline-secondary btn-sm',
+                        ),
+                        ui.input_action_button(
+                            id="get_acquisition_target",
+                            label="Print target data",
+                            class_='btn btn-outline-secondary btn-sm',
+                        ),
+                        width=1,
+                        heights_equal='row',
+                        gap='7px',
+                        class_="px-0 py-0 mx-0 my-0",
                     ),
-                    width=1,
-                    heights_equal='row',
-                    gap='7px',
-                    class_="px-0 py-0 mx-0 my-0",
+                    class_="px-2 py-1 pb-2 m-0 gap-2",
+                    style=card_style,
+                    fill=False,
                 ),
-                class_="px-2 pt-2 pb-2 m-0",
+                fill=False,
             ),
             body_args=dict(class_="p-2 m-0"),
         ),
@@ -1126,6 +1171,8 @@ app_ui = ui.page_fluid(
 # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 def server(input, output, session):
+    actual_resolution = reactive.Value(6000)
+    wl_binsize = reactive.Value(1)
     bookmarked_sed = reactive.Value(False)
     bookmarked_depth = reactive.Value(False)
     saturation_label = reactive.Value(None)
@@ -1170,44 +1217,23 @@ def server(input, output, session):
         github_url = "https://github.com/pcubillos/waltzer_etc"
 
         m = ui.modal(
-            #ui.markdown(
-            #    'If you see anything in <span style="color:red">red</span>, '
-            #    'click the button to update or follow the instructions.<br>'
-            #    'If you see <span style="color:#ffa500">orange</span>, '
-            #    "you are encouraged to upgrade, but no stress.<br>"
-            #    'If you see <span style="color:#0B980D">green</span>, you '
-            #    'are good to go modeling JWST observations.'
-            #),
             ui.hr(),
-            ui.layout_columns(
-                ui.markdown(f"This is the WALTzER ETC, version **{waltz_ver}**"),
-                ui.span(
-                    ui.tags.a(
-                        fa.icon_svg("github", fill='black'),
-                        href=github_url,
-                        target="_blank",
-                    ),
-                    ui.HTML(' Github repository is located here: '),
-                    ui.tags.a(github_url, href=github_url, target="_blank"),
+            ui.markdown(welcome),
+            ui.span(
+                ui.HTML('The Github repository is located here: '),
+                ui.tags.a(
+                    fa.icon_svg("github", fill='black'),
+                    href=github_url,
+                    target="_blank",
                 ),
-                # Trexolists
-                ui.HTML(f'JWST database last updated: {last_trexo}'),
-                # NASA Archive
-                ui.HTML(f"NASA exoplanets database last updated: {last_nasa}"),
-                # SEDs
-                #ui.input_task_button(
-                #    id='update_pysynphot',
-                #    label='Update Pysynphot',
-                #    label_busy="Fetching pysynphot data from STScI ...",
-                #    width=button_width,
-                #    class_="btn btn-sm",
-                #),
-                col_widths=(12),
-                gap='10px',
-                class_="px-0 py-0 mx-0 my-0",
+                ui.tags.a(github_url, href=github_url, target="_blank"),
             ),
             ui.hr(),
-            title=ui.markdown("**WALTzER specs**"),
+            # JWST and NASA databases:
+            ui.markdown(f'JWST database last updated: {last_trexo}'),
+            ui.markdown(f"NASA exoplanets database last updated: {last_nasa}"),
+            ui.hr(),
+            title=ui.markdown(f"**WALTzER ETC (version {waltz.__version__})**"),
             easy_close=True,
             size='l',
         )
@@ -1347,7 +1373,7 @@ def server(input, output, session):
             return
 
         if len(bands) == 0:
-            # nothing to calculate
+            # Nothing to calculate
             success = ui.markdown("Please select **at least one** band!")
             ui.notification_show(success, type="warning", duration=5)
             return
@@ -1357,10 +1383,10 @@ def server(input, output, session):
         if sed_label in bookmarked_spectra['sed']:
             flux = spectra['sed'][sed_label]['flux']
         else:
-            sed_flux = load_sed(sed_model, cache_seds)
+            sed_flux = load_sed(sed_model, sed_type, cache_seds)
             flux = sed.normalize_vega(wl, sed_flux, norm_mag)
             spectra['sed'][sed_label] = {
-                'wl': wl_micron, 'flux': flux, 'filename':None,
+                'wl': wl, 'flux': flux, 'filename':None,
             }
             bookmarked_spectra['sed'].append(sed_label)
             bookmarked_sed.set(True)
@@ -1375,19 +1401,19 @@ def server(input, output, session):
             variances = det.calc_noise(wl, flux)
             total_variance = np.sum(variances, axis=0)
             band_flux = variances[0]
-            # TBD this should mirror snr_waltzer.waltzer_snr() spectra ~850
+            # TBD this should mirror waltzer_sample()'s tso dictionary
             tso[band] = {
-                'wl': det.wl * pc.A / pc.um,
+                'wl': det.wl,
                 'flux': band_flux,
                 'variance': total_variance,
                 'variances': variances,
                 'det_type': det.mode,
-                'half_widths': det.half_widths * pc.A / pc.um,
-                'wl_min': det.wl_min * pc.A / pc.um,
-                'wl_max': det.wl_max * pc.A / pc.um,
+                'half_widths': det.half_widths,
+                'wl_min': det.wl_min,
+                'wl_max': det.wl_max,
             }
 
-        tso_label = make_tso_label(input)
+        tso_label = make_tso_label(input, spectra)
 
         tso['meta'] = {
             'bands': bands,
@@ -1914,12 +1940,12 @@ def server(input, output, session):
         is_bookmarked = not bookmarked_sed.get()
         bookmarked_sed.set(is_bookmarked)
         if is_bookmarked:
-            sed_flux = load_sed(sed_model, cache_seds)
+            sed_flux = load_sed(sed_model, sed_type, cache_seds)
             # Normalize according to Vmag
             flux = sed.normalize_vega(wl, sed_flux, norm_mag)
 
             spectra['sed'][sed_label] = {
-                'wl': wl_micron, 'flux': flux, 'filename':None,
+                'wl': wl, 'flux': flux, 'filename':None,
             }
             bookmarked_spectra['sed'].append(sed_label)
         else:
@@ -2098,6 +2124,13 @@ def server(input, output, session):
                 "the input units are correct before uploading a file!**"
             ),
             ui.input_radio_buttons(
+                id="upload_wl_units",
+                label='Wavelength units:',
+                choices=wl_units,
+                selected='micron',
+                width='100%',
+            ),
+            ui.input_radio_buttons(
                 id="upload_units",
                 label='Flux units:',
                 choices=sed_units,
@@ -2131,6 +2164,7 @@ def server(input, output, session):
                 id="upload_wl_units",
                 label='Wavelength units:',
                 choices=wl_units,
+                selected='micron',
                 width='100%',
             ),
             ui.input_radio_buttons(
@@ -2168,8 +2202,13 @@ def server(input, output, session):
         # The units tell this function SED or depth spectrum:
         filename = new_model[0]['name']
         filepath = new_model[0]['datapath']
+
+        wl_units = input.upload_wl_units.get()
         units = uploaded_units.get()
-        _, wl, model = read_spectrum_file(filepath, units, on_fail='warning')
+
+        _, wl, model = read_spectrum_file(
+            filepath, units, wl_units, on_fail='warning',
+        )
         if wl is None:
             msg = ui.markdown(
                 f'**Error:**<br>Invalid format for input file:<br>*{filename}*'
@@ -2178,16 +2217,13 @@ def server(input, output, session):
             return
         label = os.path.splitext(filename)[0]
 
-        if input.upload_wl_units.get() == 'angstrom':
-            wl *= pc.A / pc.um
-
         if units in depth_units:
             obs_geometry = input.obs_geometry.get()
             spectra[obs_geometry][label] = {
                 'wl': wl,
                 'depth': model,
                 'units': units,
-                'filename': f'unknown_{filename}',
+                'filename': f'input_{filename}',
             }
             if label not in bookmarked_spectra[obs_geometry]:
                 bookmarked_spectra[obs_geometry].append(label)
@@ -2200,9 +2236,27 @@ def server(input, output, session):
                 'wl': wl,
                 'flux': model,
                 'units': units,
-                'filename': f'unknown_{filename}',
+                'filename': f'input_{filename}',
             }
             update_sed_flag.set(label)
+
+
+    @reactive.effect
+    @reactive.event(input.tso_resolution)
+    def update_actual_resolution():
+        resolution = input.tso_resolution.get()
+        if resolution == 0.0:
+            binsize = 1
+            actual_resolution.set(6000.0)
+        else:
+            idx = searchsorted_closest(resolutions, resolution)
+            binsize = bins[idx]
+            actual_resolution.set(resolutions[idx])
+
+        if binsize != wl_binsize.get():
+            wl_binsize.set(binsize)
+        tip = f'True resolution = {actual_resolution.get():.1f}'
+        ui.update_tooltip('tso_resolution_tooltip', tip)
 
 
     # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
@@ -2226,7 +2280,7 @@ def server(input, output, session):
         for model_name in model_names:
             model = dict(spectra['sed'][model_name])
             plot_model = dict(
-                flux=model['flux'] * 1e15,
+                flux=model['flux'],
                 wl=model['wl'],
             )
             sed_models.append(plot_model)
@@ -2235,7 +2289,7 @@ def server(input, output, session):
         wl_scale = input.plot_sed_xscale.get()
         flux_scale = input.plot_sed_yscale.get()
         wl_range = [input.sed_wl_min.get(), input.sed_wl_max.get()]
-        units = '10<sup>-15</sup> erg s<sup>-1</sup> cm<sup>-2</sup> A<sup>-1</sup>'
+        units = 'mJy'
 
         resolution = input.plot_sed_resolution.get()
 
@@ -2295,14 +2349,8 @@ def server(input, output, session):
         bands = tso['meta']['bands']
 
         plot_type = input.noise_plot.get()
-        resolution = input.noise_resolution.get()
+        binsize = wl_binsize.get()
         wl_scale = input.noise_wl_scale.get()
-
-        if resolution == 0.0:
-            binsize = 1
-        else:
-            idx = searchsorted_closest(resolutions, resolution)
-            binsize = bins[idx]
 
         if plot_type == 'variance':
             head = 'wl(um)  source(e/s)  sky(e/s)  dark(e/s)  read_noise(e/s)  wl_half_width(um)'
@@ -2360,7 +2408,7 @@ def server(input, output, session):
         tso = tso_runs[key][tso_label]
 
         plot_type = input.tso_plot.get()
-        resolution = input.tso_resolution.get()
+        binsize = wl_binsize.get()
         wl_scale = input.tso_wl_scale.get()
 
         efficiency = input.efficiency.get() * pc.percent
@@ -2377,12 +2425,6 @@ def server(input, output, session):
             )
             ui.notification_show(error_msg, type="warning", duration=5)
             return go.Figure()
-
-        if resolution == 0.0:
-            binsize = 1
-        else:
-            idx = searchsorted_closest(resolutions, resolution)
-            binsize = bins[idx]
 
         # Transit-depth model at WALTzER resolving power
         depth_label, wl, depth = read_depth_spectrum(input, spectra)

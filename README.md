@@ -17,11 +17,29 @@ Go into the ``waltzer_etc`` and execute this shell commad to install the require
 pip install -e .
 ```
 
-### Download auxiliary files
+### Download auxiliary SED files
 
-Fetch stellar SED's from this link: https://drive.google.com/file/d/1pvAs8Z7RUMJrNp-JsHunZyH2vqniUnJj/view?usp=sharing
+- **LLMODELS** (required):
+  1. Download the stellar SED's from this link: https://drive.google.com/file/d/1pvAs8Z7RUMJrNp-JsHunZyH2vqniUnJj/view?usp=sharing
+  2. Unzip the file and place the .flx files into the ``waltzer_etc/data/models/`` folder.
 
-Unzip the file and place the .flx files into the ``waltzer_etc/data/models/`` folder.
+- **BT-Settl** (optional, 1200-3500K):
+  1. Download this file: https://archive.stsci.edu/hlsps/reference-atlases/hlsp_reference-atlases_hst_multi_other-spectra_multi_v2_sed.tar
+  2. Unzip the file and then move these files ``grp/redcat/trds/source/phoenixm0.0_*_5.0_2011.fits``
+     into this folder ``waltzer_etc/data/bt_settl/``.
+
+- **PHOENIX** (optional, 3500-45000K):
+  1. Download this file: https://archive.stsci.edu/hlsps/reference-atlases/hlsp_reference-atlases_hst_multi_pheonix-models_multi_v3_synphot5.tar
+  2. Unzip the file and then move these files ``grp/redcat/trds/grid/phoenix/phoenixm00/phoenixm00_*.fits``
+     into this folder ``waltzer_etc/data/phoenix/``.
+
+The final folder structure should look like this:
+```
+waltzer_etc/data/models/t*g4.4.flx
+waltzer_etc/data/bt_settl/phoenixm0.0_*_5.0_2011.fits
+waltzer_etc/data/phoenix/phoenixm00_*.fits
+```
+
 
 ## Stage 1: run the SNR
 
