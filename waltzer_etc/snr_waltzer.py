@@ -419,7 +419,7 @@ class Detector():
 
 def bin_tso_data(
         wl, flux, var, half_width,
-        depth_model, dt_in, dt_out,
+        depth_model, obs_type, dt_in, dt_out,
         det_type, binsize=None, resolution=None,
     ):
     """
@@ -432,7 +432,7 @@ def bin_tso_data(
         A planet's model, output from running waltz (stage 1).
     depth_model: 2D float array
         Transit depth model, array of shape [2,nwave] with:
-        - wavelength (angstrom)
+        - wavelength (micron)
         - transit depth
     n_obs: Integer
         Number of transits to co-add.
@@ -440,6 +440,8 @@ def bin_tso_data(
         Output resolution.
     transit_dur: Float
         If not None, overwrite transit duration (h) from tso dictionary.
+    obs_type: string
+        The observing geometry 'transit' or 'eclipse'.
     efficiency: Float
         WALTzER duty cycle efficiency.
     noiseless: Bool
@@ -455,13 +457,22 @@ def bin_tso_data(
     else:
         depth = depth_model(wl)
 
-    # Fluxes [e- collected] in and out of transit
-    flux_out = flux * dt_out
-    flux_in = flux * (1.0-depth) * dt_in
+    if obs_type == 'transit':
+        # Fluxes [e- collected] in and out of transit
+        flux_out = flux * dt_out
+        flux_in = flux * (1.0-depth) * dt_in
+        # Variance estimations (e- collected) in and out of transit
+        var_out = var * dt_out
+        var_in = var * (1.0-depth) * dt_in
 
-    # Variance estimations (e- collected) in and out of transit
-    var_out = var * dt_out
-    var_in = var * (1.0-depth) * dt_in
+    elif obs_type == 'eclipse':
+        # Fluxes [e- collected] in and out of eclipse
+        flux_out = flux * (1.0+depth) * dt_out
+        flux_in = flux * dt_in
+        # Variance estimations (e- collected) in and out of eclipse
+        var_out = var * (1.0+depth) * dt_out
+        var_in = var * dt_in
+
 
     if binsize is None and resolution is None:
         binsize = 1
@@ -531,7 +542,7 @@ def bin_tso_data(
 
 
 def simulate_fluxes(
-        tso, depth_model, n_obs=1,
+        tso, depth_model, obs_type='transit', n_obs=1,
         transit_dur=None, obs_dur=None,
         binsize=None, resolution=None, noiseless=False,
         efficiency=None,
@@ -568,7 +579,7 @@ def simulate_fluxes(
 
         bin_data = bin_tso_data(
             wl, flux, var, half_width,
-            model, dt_in, dt_out,
+            model, obs_type, dt_in, dt_out,
             det['det_type'], binsize, resolution,
         )
         data.append(bin_data)
@@ -593,7 +604,7 @@ def simulate_fluxes(
 
 
 def simulate_spectrum(
-        tso, depth_model, n_obs=1,
+        tso, depth_model, obs_type='transit', n_obs=1,
         transit_dur=None, obs_dur=None,
         binsize=None, resolution=None, noiseless=False,
         efficiency=None,
@@ -611,6 +622,8 @@ def simulate_spectrum(
         - wavelength (micron)
         - transit depth
         (sample at R > ~10000 for best results)
+    obs_type: string
+        The observing geometry 'transit' or 'eclipse'.
     n_obs: Integer
         Number of transits to co-add.
     transit_dur: Float
@@ -754,7 +767,7 @@ def simulate_spectrum(
 
         bin_data = bin_tso_data(
             wl, flux, var, half_width,
-            model, dt_in, dt_out,
+            model, obs_type, dt_in, dt_out,
             det['det_type'], binsize, resolution,
         )
 

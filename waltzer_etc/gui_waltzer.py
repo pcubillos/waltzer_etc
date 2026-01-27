@@ -2372,13 +2372,15 @@ def server(input, output, session):
         n_obs = input.n_obs.get()
         transit_dur = input.t_dur.get()
         obs_dur = input.obs_dur.get()
+        obs_geometry = input.obs_geometry.get()
 
         # Read model
         depth_label, wl, depth = read_depth_spectrum(input, spectra)
         depth_model = wl, depth
 
         flux_data = waltz.simulate_fluxes(
-            tso, depth_model, n_obs, transit_dur, obs_dur, binsize,
+            tso, depth_model, obs_geometry,
+            n_obs, transit_dur, obs_dur, binsize,
             efficiency=efficiency,
         )
 
@@ -2431,7 +2433,8 @@ def server(input, output, session):
         depth_model = waltz_model(wl, depth)
 
         tso_data = waltz.simulate_spectrum(
-            tso, depth_model, n_obs, transit_dur, obs_dur, binsize,
+            tso, depth_model, obs_geometry,
+            n_obs, transit_dur, obs_dur, binsize,
             efficiency=efficiency,
         )
 
