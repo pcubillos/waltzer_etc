@@ -22,6 +22,7 @@ def waltzer_sample(
          efficiency=0.6,
          t_dur=None,
          n_obs=10,
+         sed_type='llmodels',
     ):
     """
     WALTzER Exposure time calculator
@@ -129,8 +130,6 @@ def waltzer_sample(
         # Load SED model spectrum based on temperature
         teff = stellar_temps[i]
         logg = 4.5
-        # TBD: sed_type hardcoded for now
-        sed_type = 'llmodels'
         sed_file, sed_label, teff_match, logg_match = sed.find_closest_sed(teff, logg, sed_type)
         if sed_file in cache_seds:
             sed_flux = cache_seds[sed_file]
