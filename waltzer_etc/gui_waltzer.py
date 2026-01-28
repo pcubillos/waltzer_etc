@@ -178,11 +178,11 @@ def waltz_model(wl_model, depth):
     return waltzer_wl, waltzer_depth
 
 
-
-def load_sed(sed_model, sed_type, cache_seds):
+def load_sed(input, spectra, cache_seds):
     """
     load SED wrapper with cache'd files.
     """
+    sed_type, sed_model, mag, sed_label = parse_sed(input, spectra)
     if sed_model in cache_seds:
         sed_flux = cache_seds[sed_model]
     else:
@@ -201,6 +201,7 @@ def load_sed(sed_model, sed_type, cache_seds):
         )
         cache_seds[sed_model] = sed_flux
     return sed_flux
+
 
 
 # SED normalization band
@@ -697,7 +698,7 @@ app_ui = ui.page_fluid(
                             ui.input_numeric(
                                 id="teq_planet",
                                 label="",
-                                value=2000.0,
+                                value=2000,
                                 step=100,
                             ),
                             **layout_kwargs,
@@ -1383,7 +1384,7 @@ def server(input, output, session):
         if sed_label in bookmarked_spectra['sed']:
             flux = spectra['sed'][sed_label]['flux']
         else:
-            sed_flux = load_sed(sed_model, sed_type, cache_seds)
+            sed_flux = load_sed(input, spectra, cache_seds)
             flux = sed.normalize_vega(wl, sed_flux, norm_mag)
             spectra['sed'][sed_label] = {
                 'wl': wl, 'flux': flux, 'filename':None,
@@ -1461,29 +1462,52 @@ def server(input, output, session):
 
     @reactive.effect
     @reactive.event(input.save_data_button)
-    def _():
-        # Make a filename from current TSO
-        tso_key = input.display_tso_run.get()
-        if tso_key is None:
-            return
-        key, tso_label = tso_key.split('_', maxsplit=1)
-        tso = tso_runs[key][tso_label]
-        target = tso['meta']['target'].replace(' ', '')
-        filename = f'{key.lower()}_{target}_waltzer_tso.dat'
-        savefile = Path(f'{current_dir}/{filename}')
+    def save_data_button():
+        #print(input.tab.get())
+        if input.tab.get() == 'Stellar SED':
+            sed_type, sed_model, mag, sed_label = parse_sed(input, spectra)
+            if sed_type is None or sed_type=='input':
+                return
 
-        labs, data = data_clipboard.get()
-        np.savetxt(
-            savefile,
-            data,
-            header=labs,
-        )
+            teff = sed_catalog[sed_model]['teff']
+            logg = sed_catalog[sed_model]['logg']
+            sed_type = sed_catalog[sed_model]['sed_type']
+            sed_wl, sed_flux = sed.load_sed(teff, logg, sed_type)
 
-        ui.notification_show(
-            f"TSO model saved to file: '{savefile}'",
-            type="message",
-            duration=5,
-        )
+            wave = ps.constant_resolution_spectrum(0.23, 28.0, resolution)
+            flux = np.interp(wave, sed_wl, sed_flux)
+            # mJy to f_lambda
+            flux *= 1e-26 * pc.c / (wave*pc.um)**2.0
+
+            data = np.array([wave, flux]).T
+            filename = f'SED_{sed_model}.dat'
+            savefile = Path(f'{current_dir}/{filename}')
+            header = 'wavelength (micron)    flux (erg s-1 cm-2 cm-1)'
+            np.savetxt(savefile, data, header=header)
+            message = f'SED model saved to file: {repr(str(savefile))}'
+
+        else:
+            # Make a filename from current TSO
+            tso_key = input.display_tso_run.get()
+            if tso_key is None:
+                return
+            key, tso_label = tso_key.split('_', maxsplit=1)
+            tso = tso_runs[key][tso_label]
+            target = tso['meta']['target'].replace(' ', '')
+            filename = f'{key.lower()}_{target}_waltzer_tso.dat'
+            savefile = Path(f'{current_dir}/{filename}')
+
+            labs, data = data_clipboard.get()
+            np.savetxt(
+                savefile,
+                data,
+                header=labs,
+            )
+            message = f"TSO model saved to file: '{savefile}'"
+
+        ui.notification_show(message, type="message", duration=5)
+        print(message)
+
 
     @reactive.effect
     @reactive.event(input.save_button)
@@ -1838,7 +1862,7 @@ def server(input, output, session):
             t_dur = cache_target[target.planet]['t_dur']
             magnitude = cache_target[target.planet]['norm_mag']
         else:
-            t_eff = as_str(target.teff, '.1f', '')
+            t_eff = as_str(target.teff, '.0f', '')
             log_g = as_str(target.logg_star, '.2f', '')
             t_dur = as_str(target.transit_dur, '.3f', '')
             magnitude = f'{target.v_mag:.3f}'
@@ -1871,9 +1895,9 @@ def server(input, output, session):
             cache_target[name]['rprs_sq'] = None
             cache_target[name]['teq_planet'] = None
         else:
-            teq_planet = np.round(target.eq_temp, decimals=1)
+            teq_planet = np.round(target.eq_temp, decimals=0)
             if np.isnan(teq_planet):
-                teq_planet = 0.0
+                teq_planet = 0
             rprs_square = target.rprs**2.0
             if np.isnan(rprs_square):
                 rprs_square = 0.0
@@ -1940,7 +1964,7 @@ def server(input, output, session):
         is_bookmarked = not bookmarked_sed.get()
         bookmarked_sed.set(is_bookmarked)
         if is_bookmarked:
-            sed_flux = load_sed(sed_model, sed_type, cache_seds)
+            sed_flux = load_sed(input, spectra, cache_seds)
             # Normalize according to Vmag
             flux = sed.normalize_vega(wl, sed_flux, norm_mag)
 
@@ -2013,7 +2037,8 @@ def server(input, output, session):
         bookmarked_depth.set(is_bookmarked)
         if is_bookmarked:
             bookmarked_spectra[obs_geometry].append(depth_label)
-            depth_label, wl, depth = read_depth_spectrum(input, spectra)
+            f_star = load_sed(input, spectra, cache_seds)
+            depth_label, wave, depth = read_depth_spectrum(input, spectra, wl, f_star)
             if planet_model_type != 'Input':
                 spectra[obs_geometry][depth_label] = {'wl': wl, 'depth': depth}
         else:
@@ -2354,10 +2379,10 @@ def server(input, output, session):
 
         if plot_type == 'variance':
             head = 'wl(um)  source(e/s)  sky(e/s)  dark(e/s)  read_noise(e/s)  wl_half_width(um)'
-            wl = np.hstack([tso[band]['wl'] for band in bands])
+            wavel = np.hstack([tso[band]['wl'] for band in bands])
             var = np.hstack([tso[band]['variances'] for band in bands])
             hw = np.hstack([tso[band]['half_widths'] for band in bands])
-            clip = np.vstack((wl, var, hw)).T
+            clip = np.vstack((wavel, var, hw)).T
             data_clipboard.set([head, clip])
 
             fig = plt.plotly_variances(
@@ -2375,8 +2400,9 @@ def server(input, output, session):
         obs_geometry = input.obs_geometry.get()
 
         # Read model
-        depth_label, wl, depth = read_depth_spectrum(input, spectra)
-        depth_model = wl, depth
+        f_star = load_sed(input, spectra, cache_seds)
+        depth_label, wavel, depth = read_depth_spectrum(input, spectra, wl, f_star)
+        depth_model = wavel, depth
 
         flux_data = waltz.simulate_fluxes(
             tso, depth_model, obs_geometry,
@@ -2429,8 +2455,9 @@ def server(input, output, session):
             return go.Figure()
 
         # Transit-depth model at WALTzER resolving power
-        depth_label, wl, depth = read_depth_spectrum(input, spectra)
-        depth_model = waltz_model(wl, depth)
+        f_star = load_sed(input, spectra, cache_seds)
+        depth_label, wavel, depth = read_depth_spectrum(input, spectra, wl, f_star)
+        depth_model = waltz_model(wavel, depth)
 
         tso_data = waltz.simulate_spectrum(
             tso, depth_model, obs_geometry,
