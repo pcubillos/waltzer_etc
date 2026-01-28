@@ -291,7 +291,7 @@ layout_kwargs = dict(
     class_="pb-2 pt-0 m-0",
 )
 
-welcome = f"""\
+welcome = """\
 To update:
 
 - cd into the `waltzer_etc/` folder containing `pyproject.toml`
@@ -1214,7 +1214,6 @@ def server(input, output, session):
         with open(f'{ROOT}/data/last_updated_nea.txt', 'r') as f:
             last_nasa = f.readline().replace('_','-')
 
-        waltz_ver = waltz.__version__
         github_url = "https://github.com/pcubillos/waltzer_etc"
 
         m = ui.modal(
