@@ -88,7 +88,12 @@ def parse_args():
         default=None,
         help="Transit duration in hours; if set, calculate statistics assuming a fixed transit duration for all targets. Else, take values from input .csv target list. (default: None).",
     )
-
+    parser.add_argument(
+        "--sed",
+        choices=["llmodels", "bt_settl", "phoenix"],
+        default="llmodels",
+        help="SED type (choices: llmodels, bt_settl, phoenix; default: llmodels).",
+    )
     args = parser.parse_args()
     return args
 
@@ -100,7 +105,7 @@ def main():
     Usage
     -----
     From the command line, run:
-    waltz target_list_20250327.csv  waltzer_snr_test.csv
+    waltz target_list_20250327.csv  output_waltzer_snr.csv
     """
     args = parse_args()
 
@@ -117,6 +122,7 @@ def main():
          efficiency=args.eff,
          t_dur=args.tdur,
          n_obs=args.nobs,
+         sed_type=args.sed,
     )
     sys.exit(0)
 

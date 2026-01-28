@@ -19,8 +19,8 @@ import prompt_toolkit as ptk
 from astropy.coordinates import Angle, SkyCoord
 from astropy.units import hourangle, deg
 
-import waltzer_etc.sed as sed
 import waltzer_etc as waltz
+from waltzer_etc import sed
 from waltzer_etc.utils import ROOT
 from waltzer_etc.target import Target
 
@@ -141,7 +141,7 @@ def planet_model_name(input):
         return f'Blackbody({t_planet:.0f}K, rprs\u00b2={eclipse_depth:.3f}%)'
 
 
-def read_depth_spectrum(input, spectra):
+def read_depth_spectrum(input, spectra, wl, f_star):
     """
     Parse transit/eclipse model name based on current state.
     Calculate or extract model.
@@ -165,9 +165,9 @@ def read_depth_spectrum(input, spectra):
         depth = np.tile(transit_depth, nwave)
     elif model_type == 'Blackbody':
         rprs = np.sqrt(input.eclipse_depth.get() * 0.01)
-        t_planet = input.teq_planet.get()
-        sed_type, sed = parse_sed(input, spectra)[0:2]
-        wl, depth = jwst.blackbody_eclipse_depth(t_planet, rprs, sed_type, sed)
+        teff = input.teq_planet.get()
+        f_planet = sed.blackbody(teff, wl)
+        depth = f_planet / f_star * rprs**2
 
     return depth_label, wl, depth
 

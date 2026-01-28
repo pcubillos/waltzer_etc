@@ -8,6 +8,7 @@ __all__ = [
     'load_sed',
     'load_sed_llmodels',
     'load_sed_phoenix',
+    'blackbody',
 ]
 
 import os
@@ -15,10 +16,12 @@ import os
 import astropy.units as u
 import numpy as np
 import pyratbay.constants as pc
+import pyratbay.spectrum as ps
 import synphot as syn
 import synphot.units as su
 from synphot.spectrum import SourceSpectrum
 from synphot.models import Empirical1D
+
 from .utils import ROOT, to_mJy
 
 base_dir = f'{ROOT}data/models/'
@@ -255,4 +258,24 @@ def load_sed_phoenix(file, logg=None):
     flux = sp(sp.waveset, flux_unit=u.mJy).value
 
     return wl, flux
+
+
+def blackbody(teff, wl=None):
+    """
+    Compute a Planck flux spectrum in mJy.
+
+    Parameters
+    ----------
+    teff: Float
+        Effective temperature (K).
+    wl: 1D float array
+        Wavelength array (micron).
+    """
+    if wl is None:
+        wl = ps.constant_resolution_spectrum(0.23, 28.0, resolution=6000)
+
+    wn = 1.0/(wl*pc.um)
+    bb = ps.bbflux(wn, teff)
+    bb_flux = to_mJy(bb, wl, units='f_nu')
+    return bb_flux
 
