@@ -153,13 +153,14 @@ sed_choices = {
 sed_catalog, sed_dict = make_sed_catalog()
 
 
-# Higher resolution for models (will be bin down to WALTzER)
-resolution = 45_000.0
-wl = ps.constant_resolution_spectrum(0.23, 2.0, resolution=resolution)
 # WALTzER's resolution
 inst_resolution = detectors['vis'].resolution
 cache_seds = {}
 
+# Higher resolution for models (will be bin down to WALTzER)
+# Make sure this is an integer factor of inst_resolution=6000
+resolution = 48_000.0
+wl = ps.constant_resolution_spectrum(0.23, 2.0, resolution=resolution)
 
 def waltz_model(wl_model, depth):
     """
