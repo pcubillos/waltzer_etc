@@ -30,6 +30,7 @@ DEFAULT_DETS = {
 def calc_collecting_area(diameter, band):
     """
     Calculate the effective collecting area of the telescope+detector
+    (everything except the quantum efficiencies)
     """
     primary_area = np.pi * (0.5*diameter)**2.0
     Rprim    = 0.90  # Telescope primary reflectance in %
@@ -41,21 +42,16 @@ def calc_collecting_area(diameter, band):
     R_uvfold = 0.87  # UV fold reflectance in %
     R_uvgr   = 0.87  # UV grating reflectance in %
     Uv_geff  = 0.65  # UV grating effeciency in %
-    Uv_detQE = 0.55  # UV detector QE in %
 
     R_opfold = 0.90  # Optical fold reflectance in %
     R_opgr   = 0.90  # Optical grating reflectance in %
     Op_geff  = 0.75  # Optical grating effeciency in %
-    Op_detQE = 0.80  # Optical detector QE in %
-
-    BB_detQE = 0.80  # IR Broad band detector QE in %
 
     # Effective collecing areas in cm^2
     if band == 'nuv':
         eff_area = (
             primary_area * Rprim * Rsec * Sec_obstr
             * R_d1 * R_uvfold * R_uvgr * Uv_geff
-            #* Uv_detQE
         )
         return eff_area
 
@@ -63,7 +59,6 @@ def calc_collecting_area(diameter, band):
         eff_area = (
             primary_area * Rprim * Rsec * Sec_obstr
             * R_d1 * R_d2 * R_opfold**2 * R_opgr * Op_geff
-            #* Op_detQE
         )
         return eff_area
 
@@ -71,7 +66,6 @@ def calc_collecting_area(diameter, band):
         eff_area = (
             primary_area * Rprim * Rsec * Sec_obstr
             * R_d1 * R_d2 * R_opfold
-            #* BB_detQE
         )
         return eff_area
 
@@ -83,12 +77,9 @@ def throughput(file):
     Load a quantum-efficiency curve into a scipy interpolator function
     if input file is a number, assume that as fixed QE.
     """
-    if os.path.exists(file):
-        wl_det, response = np.loadtxt(file, unpack=True)
-    else:
-        resp = float(os.path.split(file)[1])
-        wl_det = [0.2, 2.0]
-        response = np.tile(resp, 2)
+    if not os.path.exists(file):
+        raise ValueError(f'Quantum-efficiency file not found: {repr(file)}')
+    wl_det, response = np.loadtxt(file, unpack=True)
 
     response /= 100.0
     fill_value = response[0], response[-1]
