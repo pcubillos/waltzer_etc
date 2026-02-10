@@ -41,6 +41,9 @@ def waltzer_sample(
         - 'ra'       Right ascention (degrees)
         - 'dec'      Declination (degrees)
         - 'sy_vmag'  Host's V magnitude
+        An additional 'sed' column can be set to specify cusom SEDs, which
+        contain paths to SED files containing two columns:
+        wavelength (microns) and flux (mJy)
     output_csv: String
         Output filename where to save the resuls (as CSV)
         - planet               Target name
