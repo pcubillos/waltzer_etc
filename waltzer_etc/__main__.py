@@ -73,8 +73,8 @@ def parse_args():
     parser.add_argument(
         "--diam",
         type=float,
-        default=30.0,
-        help="Telescope diameter in cm (default: 30.0).",
+        default=35.0,
+        help="Telescope diameter in cm (default: 35.0).",
     )
     parser.add_argument(
         "--eff",
@@ -93,6 +93,13 @@ def parse_args():
         choices=["llmodels", "bt_settl", "phoenix"],
         default="llmodels",
         help="SED type (choices: llmodels, bt_settl, phoenix; default: llmodels).",
+    )
+    parser.add_argument(
+        "--obs_mode",
+        type=str,
+        choices=['transit', 'stare'],
+        default='transit',
+        help="Observing mode (choices: transit, stare; default transit)",
     )
     args = parser.parse_args()
     return args
@@ -123,6 +130,7 @@ def main():
          t_dur=args.tdur,
          n_obs=args.nobs,
          sed_type=args.sed,
+         obs_mode=args.obs_mode,
     )
     sys.exit(0)
 
