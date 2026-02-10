@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## Version 0.3.2 (2026-02-10)
+
+- Enabled '--obs_mode' argument to command line call, which allows to set 'stare' mode (i.e., no transits).
+- Enabled custom SED inputs in command line call, by adding a column with header 'sed', for each target, users can set the path to an SED file.
+- simulate_fluxes() can now produce simulated source spectra for stare mode.
+- Updated primary-mirror size assumed in command line call to 35cm.
+
 ## Version 0.3.1 (2026-01-28)
 
 - Enabled blackbody planet spectrum for eclipse geometry.

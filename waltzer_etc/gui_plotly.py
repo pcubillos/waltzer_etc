@@ -498,7 +498,7 @@ def plotly_flux_snr(
     fig.update_traces(
         hovertemplate=
             'wl = %{x:.4f}<br>'+
-            'SNR = %{y:.1f}'
+            'SNR = %{y:.2f}'
     )
     fig.update_yaxes(
         title_text=y_label,
@@ -553,7 +553,7 @@ def plotly_depth_snr(
 
     for j,band in enumerate(bands):
         wl = depth_data[1][j]
-        snr_in = depth_data[2][j] / np.sqrt(depth_data[3][j])
+        snr = depth_data[2][j] / depth_data[3][j]
         show_legend = j == 0
 
         if band=="nir":
@@ -571,7 +571,7 @@ def plotly_depth_snr(
 
         fig.add_trace(go.Scatter(
             x=wl,
-            y=snr_in,
+            y=snr,
             error_x=error_x,
             mode="lines+markers" if marker else "lines",
             marker=marker,
@@ -584,7 +584,7 @@ def plotly_depth_snr(
     fig.update_traces(
         hovertemplate=
             'wl = %{x:.4f}<br>'+
-            'SNR = %{y:.1f}'
+            'SNR = %{y:.2f}'
     )
     fig.update_yaxes(
         title_text=y_label,

@@ -41,6 +41,16 @@ def to_mJy(flux, wl, units):
     -------
     flux: 1D float array
         SED spectrum in mJy.
+
+    Examples
+    --------
+    >>> from waltzer_etc.utils import to_mJy
+    >>> import numpy as np
+
+    >>> # An SED in erg s-1 cm-2 cm-1 units:
+    >>> sed_file = 'SED_llmodels_G0V_6000K.dat'
+    >>> wl, flux = np.loadtxt(sed_file, unpack=True)
+    >>> mjy_flux = to_mJy(flux, wl, 'f_lambda')
     """
     if units == 'f_freq':
         u = 10**26

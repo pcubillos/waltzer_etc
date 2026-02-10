@@ -23,6 +23,7 @@ def waltzer_sample(
          t_dur=None,
          n_obs=10,
          sed_type='llmodels',
+         obs_mode='transit',
     ):
     """
     WALTzER Exposure time calculator
@@ -40,6 +41,9 @@ def waltzer_sample(
         - 'ra'       Right ascention (degrees)
         - 'dec'      Declination (degrees)
         - 'sy_vmag'  Host's V magnitude
+        An additional 'sed' column can be set to specify cusom SEDs, which
+        contain paths to SED files containing two columns:
+        wavelength (microns) and flux (mJy)
     output_csv: String
         Output filename where to save the resuls (as CSV)
         - planet               Target name
@@ -94,7 +98,7 @@ def waltzer_sample(
     inst_resolution = vis_det.resolution
 
     # Higher resolution for models (will be binned down to WALTzER later)
-    resolution = 60_000.0
+    resolution = 48_000.0
     wl = ps.constant_resolution_spectrum(0.23, 2.0, resolution=resolution)
 
     # Target list file path
@@ -111,6 +115,14 @@ def waltzer_sample(
     dec = data['dec']
     v_mags = data['sy_vmag']
 
+    # Look for custom SEDs
+    has_sed = np.zeros(ntargets, bool)
+    if 'sed' in data:
+        input_sed = data['sed']
+        has_sed = [isinstance(sed, str) for sed in input_sed]
+    else:
+        input_sed = None
+
     # Total in-transit exposure time (s) [for .csv statistics]
     if t_dur is None:
         # Use CSV data for each target
@@ -124,18 +136,31 @@ def waltzer_sample(
     cache_seds = {}
     output_data = []
     spectra = {}
-    print('Target  Name           V_mag   Teff       NUV     VIS     NIR error (ppm)')
+
+    if obs_mode == 'transit':
+        suffix = ' error(ppm)'
+    else:
+        suffix = ' S/N'
+    print(f'Target    Name              V_mag   Teff       NUV       VIS       NIR{suffix}')
     for i in range(ntargets):
         target = planet_names[i]
         # Load SED model spectrum based on temperature
-        teff = stellar_temps[i]
-        logg = 4.5
-        sed_file, sed_label, teff_match, logg_match = sed.find_closest_sed(teff, logg, sed_type)
+        if has_sed[i]:
+            sed_file = input_sed[i]
+            teff_match = 0.0
+        else:
+            teff = stellar_temps[i]
+            logg = 4.5
+            sed_file, sed_label, teff_match, logg_match = sed.find_closest_sed(teff, logg, sed_type)
+
         if sed_file in cache_seds:
             sed_flux = cache_seds[sed_file]
         else:
             # Load SED flux
-            sed_wl, flux = sed.load_sed(teff_match, logg_match, sed_type)
+            if has_sed[i]:
+                sed_wl, flux = np.loadtxt(sed_file, unpack=True)
+            else:
+                sed_wl, flux = sed.load_sed(teff_match, logg_match, sed_type)
             # Interpolate to regular grid and apply waltzer resolution
             flux = np.interp(wl, sed_wl, flux)
             sed_flux = inst_convolution(
@@ -156,14 +181,8 @@ def waltzer_sample(
         nuv_snr_stats = nuv_det.snr_stats(wl, flux, integ_time)
         vis_snr_stats = vis_det.snr_stats(wl, flux, integ_time)
         nir_snr_stats = nir_det.snr_stats(wl, flux, integ_time)[2:]
-        print(
-            f'{i+1:2d}/{ntargets}: {repr(target):15} '
-            f'{v_mags[i]:5.2f}  {teff_match:5.0f}  '
-            f'{nuv_snr_stats[-1]:8.1f}  {vis_snr_stats[-1]:6.1f}  '
-            f'{nir_snr_stats[-1]:6.1f}'
-        )
 
-        # Note this should mirror GUI's run_waltzer()
+        # Note: this should mirror the GUI's run_waltzer() dictionary
         tso = {}
         for j,det in enumerate(detectors):
             band = det.band
@@ -171,11 +190,14 @@ def waltzer_sample(
             variances = det.calc_noise(wl, flux)
             total_variance = np.sum(variances, axis=0)
             band_flux = variances[0]
+            throughput = det.throughput(det.wl) * det.eff_area
+
             tso[band] = {
                 'wl': det.wl,
                 'flux': band_flux,
                 'variance': total_variance,
                 'variances': variances,
+                'throughput': throughput,
                 'det_type': det.mode,
                 'half_widths': det.half_widths,
                 'wl_min': det.wl_min,
@@ -189,6 +211,31 @@ def waltzer_sample(
             'transit_dur': transit_dur[i],
             'target': target,
         }
+
+        if obs_mode == 'transit':
+            number = f'{i+1}/{ntargets}'
+            print(
+                f'{number:>7}: {repr(target):18} '
+                f'{v_mags[i]:5.2f}  {teff_match:5.0f}  '
+                f'{nuv_snr_stats[-1]:8.1f}  {vis_snr_stats[-1]:8.1f}  '
+                f'{nir_snr_stats[-1]:8.1f}'
+            )
+        elif obs_mode == 'stare':
+            # Flux SNR
+            snrs = [
+                tso[det.band]['flux'] * np.sqrt(integ_time/tso[det.band]['variance'])
+                for det in detectors
+            ]
+            median_flux_snrs = [np.median(snr) for snr in snrs]
+
+            number = f'{i+1}/{ntargets}'
+            print(
+                f'{number:>7}: {repr(target):18} '
+                f'{v_mags[i]:5.2f}  {teff_match:5.0f}  '
+                f'{median_flux_snrs[0]:8.1f}  '
+                f'{median_flux_snrs[1]:8.1f}  '
+                f'{median_flux_snrs[2]:10.1f}'
+            )
 
         spectra[target] = tso
 

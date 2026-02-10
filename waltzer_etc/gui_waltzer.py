@@ -153,13 +153,14 @@ sed_choices = {
 sed_catalog, sed_dict = make_sed_catalog()
 
 
-# Higher resolution for models (will be bin down to WALTzER)
-resolution = 45_000.0
-wl = ps.constant_resolution_spectrum(0.23, 2.0, resolution=resolution)
 # WALTzER's resolution
 inst_resolution = detectors['vis'].resolution
 cache_seds = {}
 
+# Higher resolution for models (will be bin down to WALTzER)
+# Make sure this is an integer factor of inst_resolution=6000
+resolution = 48_000.0
+wl = ps.constant_resolution_spectrum(0.23, 2.0, resolution=resolution)
 
 def waltz_model(wl_model, depth):
     """
@@ -576,7 +577,7 @@ app_ui = ui.page_fluid(
                             label=ui.markdown(
                                 'Baseline time (*T*<sub>base</sub>, t_dur):',
                             ),
-                            value = 0.5,
+                            value = 1.5,
                             step = 0.25,
                         ),
                         ui.input_numeric(
@@ -1401,12 +1402,15 @@ def server(input, output, session):
             variances = det.calc_noise(wl, flux)
             total_variance = np.sum(variances, axis=0)
             band_flux = variances[0]
-            # TBD this should mirror waltzer_sample()'s tso dictionary
+            throughput = det.throughput(det.wl) * det.eff_area
+
+            # Note: this should mirror waltzer_sample()'s tso dictionary
             tso[band] = {
                 'wl': det.wl,
                 'flux': band_flux,
                 'variance': total_variance,
                 'variances': variances,
+                'throughput': throughput,
                 'det_type': det.mode,
                 'half_widths': det.half_widths,
                 'wl_min': det.wl_min,
