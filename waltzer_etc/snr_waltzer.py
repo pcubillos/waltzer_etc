@@ -843,7 +843,7 @@ def simulate_spectrum(
     if transit_dur is None:
         transit_dur = tso['meta']['transit_dur']
     if obs_dur is None:
-        obs_dur = transit_dur + 2.0*np.amax([0.5*transit_dur, 1.0])
+        obs_dur = transit_dur + 2.0*np.amax([1.5*transit_dur, 1.0])
 
     # Total times integrating in- and out-of-transit (in seconds)
     total_time = (obs_dur * 3600) * efficiency * n_obs
