@@ -23,6 +23,7 @@ def waltzer_sample(
          t_dur=None,
          n_obs=10,
          sed_type='llmodels',
+         obs_mode='transit',
     ):
     """
     WALTzER Exposure time calculator
@@ -94,7 +95,7 @@ def waltzer_sample(
     inst_resolution = vis_det.resolution
 
     # Higher resolution for models (will be binned down to WALTzER later)
-    resolution = 60_000.0
+    resolution = 48_000.0
     wl = ps.constant_resolution_spectrum(0.23, 2.0, resolution=resolution)
 
     # Target list file path
@@ -124,7 +125,12 @@ def waltzer_sample(
     cache_seds = {}
     output_data = []
     spectra = {}
-    print('Target  Name           V_mag   Teff       NUV     VIS     NIR error (ppm)')
+
+    if obs_mode == 'transit':
+        suffix = ' error (ppm)'
+    else:
+        suffix = ' S/N'
+    print(f'Target  Name           V_mag   Teff       NUV       VIS       NIR{suffix}')
     for i in range(ntargets):
         target = planet_names[i]
         # Load SED model spectrum based on temperature
@@ -156,14 +162,8 @@ def waltzer_sample(
         nuv_snr_stats = nuv_det.snr_stats(wl, flux, integ_time)
         vis_snr_stats = vis_det.snr_stats(wl, flux, integ_time)
         nir_snr_stats = nir_det.snr_stats(wl, flux, integ_time)[2:]
-        print(
-            f'{i+1:2d}/{ntargets}: {repr(target):15} '
-            f'{v_mags[i]:5.2f}  {teff_match:5.0f}  '
-            f'{nuv_snr_stats[-1]:8.1f}  {vis_snr_stats[-1]:6.1f}  '
-            f'{nir_snr_stats[-1]:6.1f}'
-        )
 
-        # Note this should mirror GUI's run_waltzer()
+        # Note: this should mirror the GUI's run_waltzer() dictionary
         tso = {}
         for j,det in enumerate(detectors):
             band = det.band
@@ -171,11 +171,14 @@ def waltzer_sample(
             variances = det.calc_noise(wl, flux)
             total_variance = np.sum(variances, axis=0)
             band_flux = variances[0]
+            throughput = det.throughput(det.wl) * det.eff_area
+
             tso[band] = {
                 'wl': det.wl,
                 'flux': band_flux,
                 'variance': total_variance,
                 'variances': variances,
+                'throughput': throughput,
                 'det_type': det.mode,
                 'half_widths': det.half_widths,
                 'wl_min': det.wl_min,
@@ -189,6 +192,29 @@ def waltzer_sample(
             'transit_dur': transit_dur[i],
             'target': target,
         }
+
+        if obs_mode == 'transit':
+            print(
+                f'{i+1:2d}/{ntargets}: {repr(target):15} '
+                f'{v_mags[i]:5.2f}  {teff_match:5.0f}  '
+                f'{nuv_snr_stats[-1]:8.1f}  {vis_snr_stats[-1]:8.1f}  '
+                f'{nir_snr_stats[-1]:8.1f}'
+            )
+        elif obs_mode == 'stare':
+            # Flux SNR
+            snrs = [
+                tso[det.band]['flux'] * np.sqrt(integ_time/tso[det.band]['variance'])
+                for det in detectors
+            ]
+            median_flux_snrs = [np.median(snr) for snr in snrs]
+
+            print(
+                f'{i+1:2d}/{ntargets}: {repr(target):15} '
+                f'{v_mags[i]:5.2f}  {teff_match:5.0f}  '
+                f'{median_flux_snrs[0]:8.1f}  '
+                f'{median_flux_snrs[1]:8.1f}  '
+                f'{median_flux_snrs[2]:10.1f}'
+            )
 
         spectra[target] = tso
 
