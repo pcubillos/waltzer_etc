@@ -112,6 +112,14 @@ def waltzer_sample(
     dec = data['dec']
     v_mags = data['sy_vmag']
 
+    # Look for custom SEDs
+    has_sed = np.zeros(ntargets, bool)
+    if 'sed' in data:
+        input_sed = data['sed']
+        has_sed = [isinstance(sed, str) for sed in input_sed]
+    else:
+        input_sed = None
+
     # Total in-transit exposure time (s) [for .csv statistics]
     if t_dur is None:
         # Use CSV data for each target
@@ -127,21 +135,29 @@ def waltzer_sample(
     spectra = {}
 
     if obs_mode == 'transit':
-        suffix = ' error (ppm)'
+        suffix = ' error(ppm)'
     else:
         suffix = ' S/N'
-    print(f'Target  Name           V_mag   Teff       NUV       VIS       NIR{suffix}')
+    print(f'Target    Name              V_mag   Teff       NUV       VIS       NIR{suffix}')
     for i in range(ntargets):
         target = planet_names[i]
         # Load SED model spectrum based on temperature
-        teff = stellar_temps[i]
-        logg = 4.5
-        sed_file, sed_label, teff_match, logg_match = sed.find_closest_sed(teff, logg, sed_type)
+        if has_sed[i]:
+            sed_file = input_sed[i]
+            teff_match = 0.0
+        else:
+            teff = stellar_temps[i]
+            logg = 4.5
+            sed_file, sed_label, teff_match, logg_match = sed.find_closest_sed(teff, logg, sed_type)
+
         if sed_file in cache_seds:
             sed_flux = cache_seds[sed_file]
         else:
             # Load SED flux
-            sed_wl, flux = sed.load_sed(teff_match, logg_match, sed_type)
+            if has_sed[i]:
+                sed_wl, flux = np.loadtxt(sed_file, unpack=True)
+            else:
+                sed_wl, flux = sed.load_sed(teff_match, logg_match, sed_type)
             # Interpolate to regular grid and apply waltzer resolution
             flux = np.interp(wl, sed_wl, flux)
             sed_flux = inst_convolution(
@@ -194,8 +210,9 @@ def waltzer_sample(
         }
 
         if obs_mode == 'transit':
+            number = f'{i+1}/{ntargets}'
             print(
-                f'{i+1:2d}/{ntargets}: {repr(target):15} '
+                f'{number:>7}: {repr(target):18} '
                 f'{v_mags[i]:5.2f}  {teff_match:5.0f}  '
                 f'{nuv_snr_stats[-1]:8.1f}  {vis_snr_stats[-1]:8.1f}  '
                 f'{nir_snr_stats[-1]:8.1f}'
@@ -208,8 +225,9 @@ def waltzer_sample(
             ]
             median_flux_snrs = [np.median(snr) for snr in snrs]
 
+            number = f'{i+1}/{ntargets}'
             print(
-                f'{i+1:2d}/{ntargets}: {repr(target):15} '
+                f'{number:>7}: {repr(target):18} '
                 f'{v_mags[i]:5.2f}  {teff_match:5.0f}  '
                 f'{median_flux_snrs[0]:8.1f}  '
                 f'{median_flux_snrs[1]:8.1f}  '
