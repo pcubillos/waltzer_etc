@@ -730,7 +730,7 @@ app_ui = ui.page_fluid(
                         label=ui.markdown('**Bands**'),
                         choices = {
                             "nuv": "NUV (0.24-0.32 um)",
-                            "vis": "VIS (0.42-0.80 um)",
+                            "vis": "VIS (0.45-0.82 um)",
                             "nir": "NIR (0.90-1.60 um)",
                         },
                         selected=['nuv', 'vis', 'nir'],
@@ -1402,7 +1402,7 @@ def server(input, output, session):
             variances = det.calc_noise(wl, flux)
             total_variance = np.sum(variances, axis=0)
             band_flux = variances[0]
-            throughput = det.throughput(det.wl) * det.eff_area
+            throughput = det.throughput(det.wl)
 
             # Note: this should mirror waltzer_sample()'s tso dictionary
             tso[band] = {

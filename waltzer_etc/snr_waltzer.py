@@ -31,6 +31,8 @@ def calc_collecting_area(diameter, band):
     """
     Calculate the effective collecting area of the telescope+detector
     (everything except the quantum efficiencies)
+
+    No longer used, but might come back to life in the future.
     """
     primary_area = np.pi * (0.5*diameter)**2.0
     Rprim    = 0.90  # Telescope primary reflectance in %
@@ -72,22 +74,37 @@ def calc_collecting_area(diameter, band):
     raise ValueError(f'Invalid band {repr(band)}')
 
 
-def throughput(file):
+def throughput(file, primary_area=1.0):
     """
-    Load a quantum-efficiency curve into a scipy interpolator function
-    if input file is a number, assume that as fixed QE.
+    Load a detector throughput curve into a scipy interpolator function
+
+    Parameters
+    ----------
+    file: String
+        Path to a tabulated throughput response function.
+        Wavelenth in first column (um), throughput in last column.
+    primary_area: Float
+        Area of primary mirror in cm^2.
+    Returns
+    -------
+    min_wl: Float
+    max_wl: Float
+    throughput: scipy interpolator
     """
     if not os.path.exists(file):
         raise ValueError(f'Quantum-efficiency file not found: {repr(file)}')
-    wl_det, response = np.loadtxt(file, unpack=True)
+    det_response = np.loadtxt(file, unpack=True)
+    wl = det_response[0]
+    wl_min = np.amin(wl)
+    wl_max = np.amax(wl)
+    response = det_response[-1] * primary_area
 
-    response /= 100.0
     fill_value = response[0], response[-1]
     throughput = si.interp1d(
-        wl_det, response,
+        wl, response,
         kind='slinear', bounds_error=False, fill_value=fill_value,
     )
-    return throughput
+    return wl_min, wl_max, throughput
 
 
 class Detector():
@@ -118,9 +135,11 @@ class Detector():
         self.band = det.get('band')
         self.mode = det.get('mode')
 
-        self.eff_area = calc_collecting_area(diameter, self.band)
-        qe_file = f'{ROOT}/data/detectors/{det.get("qe_file")}'
-        self.throughput = throughput(qe_file)
+        self.primary_area = np.pi * (0.5*diameter)**2.0
+        throughput_file = f'{ROOT}/data/detectors/{det.get("throughput_file")}'
+        self.wl_min, self.wl_max, self.throughput = throughput(
+            throughput_file, self.primary_area,
+        )
 
         self.resolution = det.getfloat('resolution')
         self.pix_scale = det.getfloat('pix_scale')
@@ -129,11 +148,8 @@ class Detector():
         self.exp_time = det.getfloat('exp_time')
         self.aperture = det.getint('aperture')
 
-        self.wl_min = det.getfloat('wl_min')
-        self.wl_max = det.getfloat('wl_max')
-
         wl_edges = ps.constant_resolution_spectrum(
-            0.24, 2.0, resolution=2.0*self.resolution,
+            0.23, 2.0, resolution=2.0*self.resolution,
         )
         i_min = np.searchsorted(wl_edges, self.wl_min)
         i_max = np.searchsorted(wl_edges, self.wl_max)
@@ -143,6 +159,7 @@ class Detector():
         self.half_widths = self.wl - wl_edges[i_min:i_max-1]
 
         if self.mode == 'photometry':
+            self._wl = np.copy(self.wl)
             self.wl = np.array([0.5 * (self.wl_max + self.wl_min)])
             self.half_widths = np.array([0.5 * (self.wl_max - self.wl_min)])
         self.nwave = len(self.wl)
@@ -208,14 +225,14 @@ class Detector():
         throughput = self.throughput(wl)
         # Convert flux (mJy) to photons s-1 Hz-1
         photon_energy = pc.h * pc.c / (wl*pc.um)
-        photons_nu = 1e-26 * flux / photon_energy * self.eff_area * throughput
+        photons_nu = 1e-26 * flux / photon_energy * throughput
         # Now convert to photons s-1 um-1
         photons = photons_nu * pc.c / (wl*pc.um)**2.0 * pc.um
 
         # Background flux (erg s-1 cm-2 A-1 pixel-1)
         bkg_flux = self.bkg_model(wl) * self.pix_scale**2.0
         # Convert flux (erg s-1 cm-2 A-1 pixel-1) to photons s-1 um-1 pixel-1
-        bkg_photons = bkg_flux / photon_energy * self.eff_area * throughput * pc.um/pc.A
+        bkg_photons = bkg_flux / photon_energy * throughput * pc.um/pc.A
 
         # Integrate at each instrumental bin to get photons s-1
         if self.mode == 'photometry':
@@ -295,7 +312,7 @@ class Detector():
         return source, variance
 
 
-    def calc_noise(self, wl, flux, integ_time=1.0):
+    def calc_noise(self, wl, flux, integ_time=1.0, readout='full_frame'):
         """
         Compute the time-integrated components of the noise:
         source, background, dark, and read noise.
@@ -823,7 +840,7 @@ def simulate_spectrum(
     """
     # An interpolator to eval the depth over the WALTzER bands
     if np.isscalar(depth_model):
-        wl_model = ps.constant_resolution_spectrum(0.24, 20.0, resolution=6000)
+        wl_model = ps.constant_resolution_spectrum(0.23, 20.0, resolution=6000)
         depth = np.tile(depth_model, len(wl_model))
         fill_value = 'extrapolate'
     else:
