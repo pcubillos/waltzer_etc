@@ -312,7 +312,7 @@ class Detector():
         return source, variance
 
 
-    def calc_noise(self, wl, flux, integ_time=1.0):
+    def calc_noise(self, wl, flux, integ_time=1.0, readout='full_frame'):
         """
         Compute the time-integrated components of the noise:
         source, background, dark, and read noise.
