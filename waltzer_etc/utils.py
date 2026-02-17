@@ -5,12 +5,15 @@ __all__ = [
     'ROOT',
     'to_mJy',
     'inst_convolution',
+    'PassBand',
 ]
 
 import os
 import re
+import operator
 
 import pyratbay.constants as pc
+from pyratbay.spectrum import resample
 import numpy as np
 import scipy.interpolate as si
 from scipy.signal import convolve
@@ -128,6 +131,115 @@ def inst_convolution(wl, spectrum, resolution, sampling_res=None, mode='same'):
     ker_conv_pix /= sum(ker_conv_pix)
     rconv = convolve(spectrum, ker_conv_pix, mode=mode)
     return rconv
+
+
+counting_types = ['photon', 'energy']
+
+class PassBand():
+    """
+    A Filter passband object, typically used for photometric filters.
+    """
+    def __init__(self, filter_file, wl=None, wn=None, counting_type='photon'):
+        if counting_type not in counting_types:
+            error = f"Invalid 'counting_type', must be one of {counting_types}"
+            raise ValueError(error)
+        self.counting_type = counting_type
+
+        # Read filter wavenumber and transmission curves:
+        if isinstance(filter_file, str):
+            self.name = os.path.splitext(os.path.basename(filter_file))[0]
+            filter_file = filter_file.replace('{ROOT}', pc.ROOT)
+            self.filter_file = os.path.realpath(filter_file)
+            input_wl, input_response = np.loadtxt(self.filter_file, unpack=True)
+        else:
+            self.name = self.filter_file = 'passband'
+            input_wl, input_response = filter_file
+
+        self.wl0 = np.sum(input_wl*input_response) / np.sum(input_response)
+        input_wn = 1.0 / (input_wl * pc.um)
+        self.wn0 = 1.0 / (self.wl0 * pc.um)
+
+        # Sort it in increasing wavenumber order, store it:
+        wn_sort = np.argsort(input_wn)
+        self.input_response = input_response[wn_sort]
+        self.input_wn = input_wn[wn_sort]
+        self.input_wl = input_wl[wn_sort]
+
+        self.response = np.copy(input_response[wn_sort])
+        self.wn = np.copy(input_wn[wn_sort])
+        self.wl = 1.0 / (self.wn * pc.um)
+
+        # Resample the filters into the planet wavenumber array:
+        if wn is not None or wl is not None:
+            self.set_sampling(wl, wn)
+
+    def set_sampling(self, wl=None, wn=None):
+        if not operator.xor(wl is None, wn is None):
+            error = 'Either provide wavelength or wavenumber array, not both'
+            raise ValueError(error)
+
+        input_is_wl = wn is None
+        if input_is_wl:
+            wn = 1.0 / (wl*pc.um)
+
+        sign = np.sign(np.ediff1d(wn))
+        if not (np.all(sign == 1) or np.all(sign == -1)):
+            raise ValueError(
+                'Input wavelength/wavenumber array must be strictly '
+                'increasing or decreasing'
+            )
+
+        response, wn_idx = resample(self.input_response, self.input_wn, wn)
+        # Internally, wavenumber is always monotonically increasing
+        wn_sort = np.argsort(wn[wn_idx])
+        response = response[wn_sort]
+        self.wn = wn[wn_idx][wn_sort]
+        self.wl = 1.0 / (self.wn * pc.um)
+        self.idx = wn_idx[wn_sort]
+
+        # Normalize response function: max(response) == 1.0
+        self.response = response / np.amax(response)
+        # Scaling factor such that integ(response)dwn = 1.0
+        if self.counting_type == 'photon':
+            self.height = 1.0 / np.trapezoid(self.response*self.wl, self.wn)
+        elif self.counting_type == 'energy':
+            self.height = 1.0 / np.trapezoid(self.response, self.wn)
+
+        if input_is_wl:
+            out_wave = self.wl
+        else:
+            out_wave = self.wn
+
+        return out_wave, self.response
+
+    def integrate(self, spectrum, wl=None, wn=None):
+        if not hasattr(self, 'idx'):
+            raise ValueError(
+                "The passband's spectral sampling has not been defined yet.  "
+                "Need to call set_sampling() method or initialize with an "
+                "input wavelength sampling"
+            )
+        if wl is not None or wn is not None:
+            self.set_sampling(wl, wn)
+
+        if self.counting_type == 'energy':
+            band_integ = np.trapezoid(
+                spectrum[self.idx]*self.response,
+                self.wn,
+            )
+        else:
+            band_integ = np.trapezoid(
+                self.wl*spectrum[self.idx]*self.response,
+                self.wn,
+            )
+        return band_integ * self.height
+
+
+    def __call__(self, spectrum, wl=None, wn=None):
+        return self.integrate(spectrum, wl, wn)
+
+    def __repr__(self):
+        return f"pyratbay.spectrum.PassBand('{self.filter_file}')"
 
 
 def normalize_name(target):
