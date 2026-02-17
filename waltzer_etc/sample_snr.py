@@ -88,14 +88,14 @@ def waltzer_sample(
     >>> n_obs = 10
     """
     # The three amigos
-    nuv_det = Detector('nuv', diameter)
-    vis_det = Detector('vis', diameter)
-    nir_det = Detector('nir', diameter)
-    detectors = nuv_det, vis_det, nir_det
+    nuv = Detector('nuv', diameter)
+    vis = Detector('vis', diameter)
+    nir = Detector('nir', diameter)
+    detectors = nuv, vis, nir
     bands = [det.band for det in detectors]
 
     # WALTzER resolution (FWHM) and wavelength grid (angstrom)
-    inst_resolution = vis_det.resolution
+    inst_resolution = vis.resolution
 
     # Higher resolution for models (will be binned down to WALTzER later)
     resolution = 48_000.0
@@ -172,15 +172,15 @@ def waltzer_sample(
         flux = sed.normalize_vega(wl, sed_flux, v_mags[i])
 
         # Flux stats
-        nuv_flux_stats = nuv_det.flux_stats(wl, flux)
-        vis_flux_stats = vis_det.flux_stats(wl, flux)
-        nir_flux_stats = nir_det.flux_stats(wl, flux)
+        nuv_flux_stats = nuv.flux_stats(wl, flux)
+        vis_flux_stats = vis.flux_stats(wl, flux)
+        nir_flux_stats = nir.flux_stats(wl, flux)
 
         # SNR stats
         integ_time = exp_time[i] * n_obs
-        nuv_snr_stats = nuv_det.snr_stats(wl, flux, integ_time)
-        vis_snr_stats = vis_det.snr_stats(wl, flux, integ_time)
-        nir_snr_stats = nir_det.snr_stats(wl, flux, integ_time)[2:]
+        nuv_snr_stats = nuv.snr_stats(wl, flux, integ_time)
+        vis_snr_stats = vis.snr_stats(wl, flux, integ_time)
+        nir_snr_stats = nir.snr_stats(wl, flux, integ_time)[2:]
 
         # Note: this should mirror the GUI's run_waltzer() dictionary
         tso = {}
@@ -289,9 +289,9 @@ def waltzer_sample(
             f.write(f"# total in-transit time (for stats): {t_dur} h\n")
 
         f.write("#\n# Wavelength ranges per band (angstrom)\n")
-        f.write(f"# NUV  {nuv_det.wl_min} {nuv_det.wl_max}\n")
-        f.write(f"# VIS  {vis_det.wl_min} {vis_det.wl_max}\n")
-        f.write(f"# NIR  {nir_det.wl_min} {nir_det.wl_max}\n#\n")
+        f.write(f"# NUV  {nuv.wl_min} {nuv.wl_max}\n")
+        f.write(f"# VIS  {vis.wl_min} {vis.wl_max}\n")
+        f.write(f"# NIR  {nir.wl_min} {nir.wl_max}\n#\n")
         f.write(','.join(header) + '\n')
         f.write(', '.join(units) + '\n')
         np.savetxt(f, output_data, delimiter=",", fmt="%s")
