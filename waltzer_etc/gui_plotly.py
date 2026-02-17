@@ -376,6 +376,8 @@ def plotly_variances(
 
         if band_type=="photometry":
             marker = dict(symbol="circle", size=5)
+            # TBD: get wl0, then calculate uneven X-error bars
+            wl = [0.5*(var['wl_max']+var['wl_min'])]
             error = 0.5*(var['wl_max']-var['wl_min'])
             error_x = dict(
                 type='data', visible=True,

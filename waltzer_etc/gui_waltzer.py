@@ -19,8 +19,7 @@ from shinywidgets import output_widget, render_plotly
 import pyratbay.constants as pc
 import pyratbay.spectrum as ps
 
-from waltzer_etc.utils import ROOT as ROOT
-from waltzer_etc.utils import inst_convolution
+from waltzer_etc.utils import ROOT, inst_convolution, PassBand
 import waltzer_etc as waltz
 import waltzer_etc.sed as sed
 from gui_utils import (
@@ -751,6 +750,16 @@ app_ui = ui.page_fluid(
                         max=50,
                         step=1,
                     ),
+                    ui.input_select(
+                        id='readout',
+                        label='Readout mode',
+                        choices={
+                            'full_frame': 'Full frame',
+                            #'bright': 'Bright',
+                            #'faint': 'Faint',
+                            #'ultra_faint': 'Ultra faint',
+                        }
+                    ),
                     style=card_style,
                     class_="px-2 pt-1 pb-2 m-0 gap-3",
                     fill=False,
@@ -1359,6 +1368,7 @@ def server(input, output, session):
         # Get the variances first
         efficiency = input.efficiency.get() * pc.percent
         bands = list(input.bands.get())
+        readout = input.readout.get()
         n_obs = input.n_obs.get()
 
         obs_geometry = input.obs_geometry.get()
@@ -1399,14 +1409,14 @@ def server(input, output, session):
         tso = {}
         for band in bands:
             det = detectors[band]
-            variances = det.calc_noise(wl, flux)
+            variances = det.calc_noise(wl, flux, readout=readout)
             total_variance = np.sum(variances, axis=0)
             band_flux = variances[0]
-            throughput = det.throughput(det.wl)
+            throughput = det.throughput(det._wl)
 
             # Note: this should mirror waltzer_sample()'s tso dictionary
             tso[band] = {
-                'wl': det.wl,
+                'wl': det._wl,
                 'flux': band_flux,
                 'variance': total_variance,
                 'variances': variances,
@@ -1466,7 +1476,7 @@ def server(input, output, session):
     @reactive.effect
     @reactive.event(input.save_data_button)
     def save_data_button():
-        #print(input.tab.get())
+        tab = input.tab.get()
         if input.tab.get() == 'Stellar SED':
             sed_type, sed_model, mag, sed_label = parse_sed(input, spectra)
             if sed_type is None or sed_type=='input':
@@ -1488,6 +1498,47 @@ def server(input, output, session):
             header = 'wavelength (micron)    flux (erg s-1 cm-2 cm-1)'
             np.savetxt(savefile, data, header=header)
             message = f'SED model saved to file: {repr(str(savefile))}'
+
+        elif input.tab.get() == 'Noise':
+            tso_key = input.display_tso_run.get()
+            if tso_key is None:
+                return
+            key, tso_label = tso_key.split('_', maxsplit=1)
+            tso = tso_runs[key][tso_label]
+
+            plot_type = input.noise_plot.get()
+            bands = tso['meta']['bands']
+            if plot_type == 'variance':
+                header = (
+                    'wl(um)  source(e/s)  sky(e/s)  dark(e/s)  '
+                    'read_noise(e/s)  wl_half_width(um)'
+                )
+                wl = []
+                for band in bands:
+                    wavel = tso[band]['wl']
+                    if tso[band]['det_type'] == 'photometry':
+                        #throughput = tso[band]['throughput']
+                        #band = PassBand([wavel, throughput], wl=wavel)
+                        #wavel = [band.wl0]
+                        wavel = [0.5*(tso[band]['wl_max']+tso[band]['wl_min'])]
+                    wl.append(wavel)
+                wl = np.hstack(wl)
+                var = np.hstack([tso[band]['variances'] for band in bands])
+                hw = np.hstack([tso[band]['half_widths'] for band in bands])
+                data = np.vstack((wl, var, hw)).T
+
+            elif plot_type == 'snr':
+                header = (
+                    'wl(um)  flux_in(e)  flux_out(e)  '
+                    'var_in(e)  var_out(e)  wl_half_width(um) depth'
+                )
+                data = data_clipboard.get()
+
+            sed_type, sed_model, mag, sed_label = parse_sed(input, spectra)
+            filename = f'{sed_model}_waltzer_variances.dat'
+            savefile = Path(f'{current_dir}/{filename}')
+            np.savetxt(savefile, data, header=header)
+            message = f"Variances saved to file: '{savefile}'"
 
         else:
             # Make a filename from current TSO
@@ -2381,13 +2432,6 @@ def server(input, output, session):
         wl_scale = input.noise_wl_scale.get()
 
         if plot_type == 'variance':
-            head = 'wl(um)  source(e/s)  sky(e/s)  dark(e/s)  read_noise(e/s)  wl_half_width(um)'
-            wavel = np.hstack([tso[band]['wl'] for band in bands])
-            var = np.hstack([tso[band]['variances'] for band in bands])
-            hw = np.hstack([tso[band]['half_widths'] for band in bands])
-            clip = np.vstack((wavel, var, hw)).T
-            data_clipboard.set([head, clip])
-
             fig = plt.plotly_variances(
                 tso,
                 wl_scale=wl_scale,
@@ -2404,7 +2448,7 @@ def server(input, output, session):
 
         # Read model
         f_star = load_sed(input, spectra, cache_seds)
-        depth_label, wavel, depth = read_depth_spectrum(input, spectra, wl, f_star)
+        lab, wavel, depth = read_depth_spectrum(input, spectra, wl, f_star)
         depth_model = wavel, depth
 
         flux_data = waltz.simulate_fluxes(
@@ -2413,12 +2457,11 @@ def server(input, output, session):
             efficiency=efficiency,
         )
 
-        head = 'wl(um)  flux_in(e)  flux_out(e)  var_in(e)  var_out(e)  wl_half_width(um) depth'
         clip = np.vstack([
             np.hstack([d for d in f_data])
             for f_data in flux_data[1:]
         ]).T
-        data_clipboard.set([head, clip])
+        data_clipboard.set(clip)
 
         fig = plt.plotly_flux_snr(
             flux_data,

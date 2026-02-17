@@ -190,10 +190,10 @@ def waltzer_sample(
             variances = det.calc_noise(wl, flux)
             total_variance = np.sum(variances, axis=0)
             band_flux = variances[0]
-            throughput = det.throughput(det.wl)
+            throughput = det.throughput(det._wl)
 
             tso[band] = {
-                'wl': det.wl,
+                'wl': det._wl,
                 'flux': band_flux,
                 'variance': total_variance,
                 'variances': variances,

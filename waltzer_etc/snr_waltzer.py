@@ -17,7 +17,7 @@ import pyratbay.constants as pc
 import pyratbay.spectrum as ps
 import scipy.interpolate as si
 
-from .utils import ROOT
+from .utils import ROOT, PassBand
 
 
 DEFAULT_DETS = {
@@ -157,9 +157,9 @@ class Detector():
         # Center and half-widths of wavelength bins (micron):
         self.wl = 0.5 * (wl_edges[i_min+1:i_max] + wl_edges[i_min:i_max-1])
         self.half_widths = self.wl - wl_edges[i_min:i_max-1]
+        self._wl = np.copy(self.wl)
 
         if self.mode == 'photometry':
-            self._wl = np.copy(self.wl)
             self.wl = np.array([0.5 * (self.wl_max + self.wl_min)])
             self.half_widths = np.array([0.5 * (self.wl_max - self.wl_min)])
         self.nwave = len(self.wl)
@@ -173,7 +173,7 @@ class Detector():
             wl_bkg, sky, kind='slinear', bounds_error=False,
         )
 
-    def photon_spectrum(self, wl, flux):
+    def photon_spectrum(self, wl, flux, readout='full_frame'):
         """
         Compute spectra in photons per second.
 
@@ -245,11 +245,17 @@ class Detector():
             )
 
         # Spectroscopy: integrate (photons s-1 A-1 pix-1) to photons s-1 pix-1
+        nwave = self.nwave
+        if readout == 'faint':
+            nwave = self.nwave // 2
+        elif readout == 'ultra_faint':
+            nwave = self.nwave // 4
+
         wl_edges = self._wl_edges
         edge_idx = np.searchsorted(wl, wl_edges)
-        bin_flux = np.zeros(self.nwave)
-        bin_bkg = np.zeros(self.nwave)
-        for i in range(self.nwave):
+        bin_flux = np.zeros(nwave)
+        bin_bkg = np.zeros(nwave)
+        for i in range(nwave):
             i1, i2 = edge_idx[i], edge_idx[i+1]+1
             bin_flux[i] = np.trapezoid(photons[i1:i2], wl[i1:i2])
             bin_bkg[i] = np.trapezoid(bkg_photons[i1:i2], wl[i1:i2])
@@ -284,7 +290,7 @@ class Detector():
         return min_flux, median_flux, max_flux
 
 
-    def calc_total_noise(self, wl, flux, integ_time=1.0):
+    def calc_total_noise(self, wl, flux, integ_time=1.0, readout='full_frame'):
         """
         Compute the time-integrated source flux and total variance spectra.
 
@@ -305,7 +311,7 @@ class Detector():
         variance: float
             Observation's variance in number of photons.
         """
-        variances = self.calc_noise(wl, flux, integ_time)
+        variances = self.calc_noise(wl, flux, integ_time, readout)
 
         source = variances[0]
         variance = np.sum(np.array(variances), axis=0)
@@ -373,8 +379,21 @@ class Detector():
         var_dark = npix*(1+npix/nsky) * self.dark * integ_time
         var_dark = np.tile(var_dark, self.nwave)
 
-        # Total number of photons per pixel
-        var_read = npix*(1+npix/nsky) * self.read_noise * nreads
+        # Read-out noise
+        if readout == 'full_frame':
+            var_read = npix*(1+npix/nsky) * self.read_noise * nreads
+
+        elif readout == 'bright':
+            # Only two reads (instead of nsky) for the background:
+            var_read = npix*(1+2*npix/nsky**2) * self.read_noise * nreads
+
+        elif readout == 'faint':
+            # as bright + 2-pixel spectral binning
+            var_read = npix*(1+2*npix/nsky**2) * self.read_noise * nreads
+
+        elif readout == 'ultra_faint':
+            var_read = npix*(1+npix/nsky) * self.read_noise * nreads
+
         var_read = np.tile(var_read, self.nwave)
 
         return (
@@ -426,7 +445,7 @@ class Detector():
 
 
 def bin_tso_data(
-        wl, flux, var, half_width,
+        wl, flux, var, throughput, half_width,
         depth_model, obs_type, dt_in, dt_out,
         det_type, binsize=None, resolution=None,
     ):
@@ -454,12 +473,15 @@ def bin_tso_data(
     """
     # Evaluate transit-depth in the band:
     if det_type == 'photometry':
-        band = ps.Tophat(wl[0], half_width[0], wl=depth_model.x, ignore_gaps=True)
+        band_data = wl, throughput
+        band = PassBand(band_data, wl=depth_model.x)
         if band.wl is None:
             depth = np.nan
         else:
             depth = band.integrate(depth_model.y)
+        wl = np.array([band.wl0])
     else:
+        # TBD: convolve, integrate instead
         depth = depth_model(wl)
 
     if obs_type == 'transit':
@@ -652,10 +674,11 @@ def simulate_fluxes(
         wl = det['wl']
         flux = det['flux']
         var = det['variance']
+        throughput = det['throughput']
         half_width = det['half_widths']
 
         bin_data = bin_tso_data(
-            wl, flux, var, half_width,
+            wl, flux, var, throughput, half_width,
             model, obs_type, dt_in, dt_out,
             det['det_type'], binsize, resolution,
         )
@@ -878,10 +901,11 @@ def simulate_spectrum(
         wl = det['wl']
         flux = det['flux']
         var = det['variance']
+        throughput = det['throughput']
         half_width = det['half_widths']
 
         bin_data = bin_tso_data(
-            wl, flux, var, half_width,
+            wl, flux, var, throughput, half_width,
             model, obs_type, dt_in, dt_out,
             det['det_type'], binsize, resolution,
         )
