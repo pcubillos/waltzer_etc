@@ -157,9 +157,12 @@ inst_resolution = detectors['vis'].resolution
 cache_seds = {}
 
 # Higher resolution for models (will be bin down to WALTzER)
-# Make sure this is an integer factor of inst_resolution=6000
-resolution = 48_000.0
-wl = ps.constant_resolution_spectrum(0.23, 2.0, resolution=resolution)
+det = detectors['nuv']
+wl_min = det.hires_wl_min
+wl_max = det.hires_wl_max
+resolution = det.hires_resolution
+wl = ps.constant_resolution_spectrum(wl_min, wl_max, resolution)
+
 
 def waltz_model(wl_model, depth):
     """
@@ -195,10 +198,7 @@ def load_sed(input, spectra, cache_seds):
             sed_type = sed_catalog[sed_model]['sed_type']
             sed_wl, flux = sed.load_sed(teff, logg, sed_type)
 
-        flux = np.interp(wl, sed_wl, flux)
-        sed_flux = inst_convolution(
-            wl, flux, inst_resolution, sampling_res=resolution,
-        )
+        sed_flux = np.interp(wl, sed_wl, flux)
         cache_seds[sed_model] = sed_flux
     return sed_flux
 
@@ -1396,8 +1396,12 @@ def server(input, output, session):
         else:
             sed_flux = load_sed(input, spectra, cache_seds)
             flux = sed.normalize_vega(wl, sed_flux, norm_mag)
+            conv_flux = inst_convolution(wl, flux, inst_resolution, resolution)
             spectra['sed'][sed_label] = {
-                'wl': wl, 'flux': flux, 'filename':None,
+                'wl': wl,
+                'flux': flux,
+                'conv_flux': conv_flux,
+                'filename': None,
             }
             bookmarked_spectra['sed'].append(sed_label)
             bookmarked_sed.set(True)
@@ -1409,20 +1413,26 @@ def server(input, output, session):
         tso = {}
         for band in bands:
             det = detectors[band]
-            variances = det.calc_noise(wl, flux, readout=readout)
-            total_variance = np.sum(variances, axis=0)
-            band_flux = variances[0]
-            throughput = det.throughput(det._wl)
+            det.photon_spectrum(wl, flux)
+            throughput = det.throughput(det.hires_wl)
 
             # Note: this should mirror waltzer_sample()'s tso dictionary
             tso[band] = {
-                'wl': det._wl,
-                'flux': band_flux,
-                'variance': total_variance,
-                'variances': variances,
+                'hires_wl': det.hires_wl,
+                'flux': det.e_flux,
+                'background': det.e_background,
                 'throughput': throughput,
+                'dark': det.dark,
+                'read_noise': det.read_noise,
                 'det_type': det.mode,
-                'half_widths': det.half_widths,
+                'npix': det.npix,
+                'nsky': det.nsky,
+                'nwave': det.nwave,
+                'i_start': det.i_start,
+                'over_sampling': det.over_sampling,
+                'resolution': det.resolution,
+                'hires_resolution': det.hires_resolution,
+                #'half_widths': det.half_widths,
                 'wl_min': det.wl_min,
                 'wl_max': det.wl_max,
             }
@@ -2021,9 +2031,13 @@ def server(input, output, session):
             sed_flux = load_sed(input, spectra, cache_seds)
             # Normalize according to Vmag
             flux = sed.normalize_vega(wl, sed_flux, norm_mag)
+            conv_flux = inst_convolution(wl, flux, inst_resolution, resolution)
 
             spectra['sed'][sed_label] = {
-                'wl': wl, 'flux': flux, 'filename':None,
+                'wl': wl,
+                'flux': flux,
+                'conv_flux': conv_flux,
+                'filename':None,
             }
             bookmarked_spectra['sed'].append(sed_label)
         else:
@@ -2094,7 +2108,10 @@ def server(input, output, session):
             f_star = load_sed(input, spectra, cache_seds)
             depth_label, wave, depth = read_depth_spectrum(input, spectra, wl, f_star)
             if planet_model_type != 'Input':
-                spectra[obs_geometry][depth_label] = {'wl': wl, 'depth': depth}
+                spectra[obs_geometry][depth_label] = {
+                    'wl': wl,
+                    'depth': depth,
+                }
         else:
             bookmarked_spectra[obs_geometry].remove(depth_label)
 
@@ -2106,7 +2123,8 @@ def server(input, output, session):
         bookmarked_spectra[obs_geometry].clear()
         bookmarked_depth.set(False)
         update_depth_flag.set('cleared')  # trigger UI updates
-        ui.notification_show(f"Cleared all {obs_geometry} depth bookmarks", type="message", duration=3)
+        msg = f"Cleared all {obs_geometry} depth bookmarks"
+        ui.notification_show(msg, type="message", duration=3)
 
 
     @reactive.effect
@@ -2352,14 +2370,14 @@ def server(input, output, session):
         model_names = bookmarked_spectra['sed']
         if len(model_names) == 0:
             fig = go.Figure()
-            fig.update_layout(title='Bookmark SEDs models to show them here')
+            fig.update_layout(title='Bookmark SED models to show them here')
             return fig
 
         sed_models = []
         for model_name in model_names:
             model = dict(spectra['sed'][model_name])
             plot_model = dict(
-                flux=model['flux'],
+                flux=model['conv_flux'],
                 wl=model['wl'],
             )
             sed_models.append(plot_model)
