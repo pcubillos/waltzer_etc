@@ -3,6 +3,7 @@
 
 __all__ = [
     'Detector',
+    'calc_variances',
     'bin_tso_data',
     'simulate_fluxes',
     'simulate_spectrum',
@@ -17,7 +18,7 @@ import pyratbay.constants as pc
 import pyratbay.spectrum as ps
 import scipy.interpolate as si
 
-from .utils import ROOT, PassBand
+from .utils import ROOT, PassBand, inst_convolution
 
 
 DEFAULT_DETS = {
@@ -102,7 +103,8 @@ def throughput(file, primary_area=1.0):
     fill_value = response[0], response[-1]
     throughput = si.interp1d(
         wl, response,
-        kind='slinear', bounds_error=False, fill_value=fill_value,
+        kind='slinear',
+        bounds_error=False, fill_value=fill_value,
     )
     return wl_min, wl_max, throughput
 
@@ -135,12 +137,6 @@ class Detector():
         self.band = det.get('band')
         self.mode = det.get('mode')
 
-        self.primary_area = np.pi * (0.5*diameter)**2.0
-        throughput_file = f'{ROOT}/data/detectors/{det.get("throughput_file")}'
-        self.wl_min, self.wl_max, self.throughput = throughput(
-            throughput_file, self.primary_area,
-        )
-
         self.resolution = det.getfloat('resolution')
         self.pix_scale = det.getfloat('pix_scale')
         self.dark = det.getfloat('dark')
@@ -148,16 +144,55 @@ class Detector():
         self.exp_time = det.getfloat('exp_time')
         self.aperture = det.getint('aperture')
 
-        wl_edges = ps.constant_resolution_spectrum(
-            0.23, 2.0, resolution=2.0*self.resolution,
+        # Number of pixels in source and in sky-background
+        aperture_radius = self.aperture // 2
+        if self.mode == 'photometry':
+            self.npix = int(np.pi*aperture_radius**2)
+            sky_in = aperture_radius
+            sky_out = 2*aperture_radius
+            self.nsky = int(np.pi * (sky_out**2 - sky_in**2))
+        elif self.mode == 'spectroscopy':
+            self.npix = 2*aperture_radius
+            sky_in = aperture_radius
+            sky_out = 3*aperture_radius
+            self.nsky = 2 * (sky_out-sky_in)
+
+        self.primary_area = np.pi * (0.5*diameter)**2.0
+        throughput_file = f'{ROOT}/data/detectors/{det.get("throughput_file")}'
+        self.wl_min, self.wl_max, self.throughput = throughput(
+            throughput_file, self.primary_area,
         )
-        i_min = np.searchsorted(wl_edges, self.wl_min)
-        i_max = np.searchsorted(wl_edges, self.wl_max)
-        self._wl_edges = wl_edges[i_min:i_max]
+        margin_left = 2*self.wl_min/self.resolution
+        margin_right = 2*self.wl_max/self.resolution
+
+        # High-resolution sampling
+        over_sampling = 8
+        self.hires_resolution = 2.0*self.resolution * over_sampling
+        self.hires_wl_min = 0.23
+        self.hires_wl_max = 2.0
+        hires_wl = ps.constant_resolution_spectrum(
+            self.hires_wl_min, self.hires_wl_max, self.hires_resolution,
+        )
+
+        wl_min = self.wl_min - margin_left
+        wl_max = self.wl_max + margin_right
+        self.hires_wl = hires_wl[
+            (hires_wl>=wl_min) &
+            (hires_wl<=wl_max)
+        ]
+
+        i_wl_ini = np.searchsorted(self.hires_wl, self.wl_min)
+        i_wl_end = np.searchsorted(self.hires_wl, self.wl_max)
+        wl_edges = self.hires_wl[i_wl_ini:i_wl_end:over_sampling]
         # Center and half-widths of wavelength bins (micron):
-        self.wl = 0.5 * (wl_edges[i_min+1:i_max] + wl_edges[i_min:i_max-1])
-        self.half_widths = self.wl - wl_edges[i_min:i_max-1]
-        self._wl = np.copy(self.wl)
+        self.wl = 0.5 * (wl_edges[1:] + wl_edges[:-1])
+        self.half_widths = 0.5 * (wl_edges[1:] - wl_edges[:-1])
+
+        # Sampling conversion
+        self._wl_edges = wl_edges
+        self.i_start = i_wl_ini
+        self.nwave = len(wl_edges) - 1
+        self.over_sampling = over_sampling
 
         if self.mode == 'photometry':
             self.wl = np.array([0.5 * (self.wl_max + self.wl_min)])
@@ -172,6 +207,7 @@ class Detector():
         self.bkg_model = si.interp1d(
             wl_bkg, sky, kind='slinear', bounds_error=False,
         )
+
 
     def photon_spectrum(self, wl, flux, readout='full_frame'):
         """
@@ -222,6 +258,14 @@ class Detector():
         >>> wl_min = 6700
         >>> wl_max = 7100
         """
+        wl_min = np.amin(self.hires_wl)
+        wl_max = np.amax(self.hires_wl)
+        ini = np.searchsorted(wl, wl_min)
+        end = np.searchsorted(wl, wl_max) + 1
+
+        flux = flux[ini:end]
+        wl = wl[ini:end]
+
         throughput = self.throughput(wl)
         # Convert flux (mJy) to photons s-1 Hz-1
         photon_energy = pc.h * pc.c / (wl*pc.um)
@@ -234,33 +278,9 @@ class Detector():
         # Convert flux (erg s-1 cm-2 A-1 pixel-1) to photons s-1 um-1 pixel-1
         bkg_photons = bkg_flux / photon_energy * throughput * pc.um/pc.A
 
-        # Integrate at each instrumental bin to get photons s-1
-        if self.mode == 'photometry':
-            mask = (wl>=self.wl_min) & (wl<=self.wl_max)
-            bin_flux = np.trapezoid(photons[mask], wl[mask])
-            bin_bkg = np.trapezoid(bkg_photons[mask], wl[mask])
-            return (
-                np.array([bin_flux]),
-                np.array([bin_bkg]),
-            )
-
-        # Spectroscopy: integrate (photons s-1 A-1 pix-1) to photons s-1 pix-1
-        nwave = self.nwave
-        if readout == 'faint':
-            nwave = self.nwave // 2
-        elif readout == 'ultra_faint':
-            nwave = self.nwave // 4
-
-        wl_edges = self._wl_edges
-        edge_idx = np.searchsorted(wl, wl_edges)
-        bin_flux = np.zeros(nwave)
-        bin_bkg = np.zeros(nwave)
-        for i in range(nwave):
-            i1, i2 = edge_idx[i], edge_idx[i+1]+1
-            bin_flux[i] = np.trapezoid(photons[i1:i2], wl[i1:i2])
-            bin_bkg[i] = np.trapezoid(bkg_photons[i1:i2], wl[i1:i2])
-
-        return bin_flux, bin_bkg
+        self.e_flux = photons
+        self.e_background = bkg_photons
+        return photons, bkg_photons
 
 
     def flux_stats(self, wl, flux):
@@ -283,128 +303,21 @@ class Detector():
         max_flux: float
             Maximum flux within the wavelength range (mJy).
         """
-        band = (wl > self.wl_min) & (wl < self.wl_max)
-        min_flux = np.min(flux[band])
-        median_flux = np.median(flux[band])
-        max_flux = np.max(flux[band])
+        wl_min = np.amin(self.hires_wl)
+        wl_max = np.amax(self.hires_wl)
+        band = (wl >= wl_min) & (wl <= wl_max)
+
+        sed_flux = inst_convolution(
+            wl[band], flux[band], self.resolution, self.hires_resolution,
+        )
+
+        min_flux = np.min(sed_flux)
+        median_flux = np.median(sed_flux)
+        max_flux = np.max(sed_flux)
         return min_flux, median_flux, max_flux
 
 
-    def calc_total_noise(self, wl, flux, integ_time=1.0, readout='full_frame'):
-        """
-        Compute the time-integrated source flux and total variance spectra.
-
-        Parameters
-        ----------
-        wl: 1D float array
-            Input wavelength array (micron).
-        flux: 1D float array
-            Input flux spectrum (mJy).
-        integ_time: Float
-            Total integration time (s).  Leave as integ_time=1.0 to
-            obtain the values per second.
-
-        Returns
-        -------
-        source: float
-            Source's time-integrated flux spectrum in number of photons.
-        variance: float
-            Observation's variance in number of photons.
-        """
-        variances = self.calc_noise(wl, flux, integ_time, readout)
-
-        source = variances[0]
-        variance = np.sum(np.array(variances), axis=0)
-        return source, variance
-
-
-    def calc_noise(self, wl, flux, integ_time=1.0, readout='full_frame'):
-        """
-        Compute the time-integrated components of the noise:
-        source, background, dark, and read noise.
-
-        Parameters
-        ----------
-        wl: 1D float array
-            Input wavelength array (micron).
-        flux: 1D float array
-            Input flux spectrum (mJy).
-        integ_time: Float
-            Total integration time (s).
-
-        Returns
-        -------
-        var_source: 1D float array
-            Source Poisson noise variance.
-        var_background: 1D float array
-            Background Poisson noise variance.
-        var_dark: 1D float array
-            Dark-current variance.
-        var_read: 1D float array
-            Read-noise variance.
-        """
-        if integ_time is None:
-            integ_time = 1.0
-        # For the time being, ignore the fact that nreads should be integer
-        nreads = integ_time / self.exp_time
-
-        # Fluxes in photons per second
-        e_flux, e_background = self.photon_spectrum(wl, flux)
-
-        # Integrate over time
-        total_flux = e_flux * integ_time
-        var_source = np.abs(total_flux)
-
-        # Aperture sizes
-        aperture_radius = self.aperture//2
-
-        # Number of pixels in source and in sky-background
-        if self.mode == 'photometry':
-            npix = int(np.pi*aperture_radius**2)
-            sky_in = aperture_radius
-            sky_out = 2*aperture_radius
-            nsky = int(np.pi * (sky_out**2 - sky_in**2))
-        elif self.mode == 'spectroscopy':
-            npix = 2*aperture_radius
-            sky_in = aperture_radius
-            sky_out = 3*aperture_radius
-            nsky = 2 * (sky_out-sky_in)
-        else:
-            raise ValueError()
-
-        # Background number of photons
-        var_background = npix*(1+npix/nsky) * e_background * integ_time
-
-        # Dark number of photons
-        var_dark = npix*(1+npix/nsky) * self.dark * integ_time
-        var_dark = np.tile(var_dark, self.nwave)
-
-        # Read-out noise
-        if readout == 'full_frame':
-            var_read = npix*(1+npix/nsky) * self.read_noise * nreads
-
-        elif readout == 'bright':
-            # Only two reads (instead of nsky) for the background:
-            var_read = npix*(1+2*npix/nsky**2) * self.read_noise * nreads
-
-        elif readout == 'faint':
-            # as bright + 2-pixel spectral binning
-            var_read = npix*(1+2*npix/nsky**2) * self.read_noise * nreads
-
-        elif readout == 'ultra_faint':
-            var_read = npix*(1+npix/nsky) * self.read_noise * nreads
-
-        var_read = np.tile(var_read, self.nwave)
-
-        return (
-            var_source,
-            var_background,
-            var_dark,
-            var_read,
-        )
-
-
-    def snr_stats(self, wl, flux, integ_time):
+    def snr_stats(self, var_data, integ_time):
         """
         Compute basic SNR statistics.
 
@@ -428,11 +341,11 @@ class Detector():
         transit_uncert: Float
             Mean transit-depth uncertainty (ppm) assuming tdur=integ_time.
         """
-        # integrate over time
-        total_flux, variance = self.calc_total_noise(wl, flux, integ_time)
+        source = var_data[2]
+        variance = np.sum(np.array(var_data[2:]), axis=0)
 
         # Signal-to-noise estimation
-        snr = total_flux / np.sqrt(variance)
+        snr = source / np.sqrt(variance) * np.sqrt(integ_time)
         snr_min = np.min(snr)
         snr_median = np.median(snr)
         snr_max = np.max(snr)
@@ -442,6 +355,114 @@ class Detector():
         transit_uncert = np.sqrt(2.0) / snr_median / pc.ppm
 
         return snr_min, snr_median, snr_max, transit_uncert
+
+
+def calc_variances(tso, readout='full_frame', exp_time=300.0):
+    """
+    Compute the electrons per second signal of the source,
+    background, dark, and read noise.
+
+    Convolve to WALTzER resolving power (FWHM=3000),
+    Integrate signals over WALTzER pixels.
+
+    Parameters
+    ----------
+    wl: 1D float array
+        Input wavelength array (micron).
+    flux: 1D float array
+        Input flux spectrum (mJy).
+    integ_time: Float
+        Total integration time (s).
+
+    Returns
+    -------
+    wl: 1D float array
+        Wavelength array at WALTzER pixel positions.
+    half_width: 1D float array
+        Wavelength half width of WALTzER pixels.
+    var_source: 1D float array
+        Source Poisson noise variance.
+    var_background: 1D float array
+        Background Poisson noise variance.
+    var_dark: 1D float array
+        Dark-current variance.
+    var_read: 1D float array
+        Read-noise variance.
+    """
+    npix = tso['npix']
+    nsky = tso['nsky']
+    hires_wl = tso['hires_wl']
+    background = tso['background']
+    # For the time being, ignore the fact that nreads should be integer
+    nreads = 1.0 / exp_time
+
+    # Convolve SED flux to WALTzER resolving power
+    flux = inst_convolution(
+        hires_wl, tso['flux'], tso['resolution'],  tso['hires_resolution'],
+    )
+
+    # Integrate at each instrumental pixel to get photons s-1
+    if tso['det_type'] == 'photometry':
+        bin_flux = np.array([np.trapezoid(flux, hires_wl)])
+        bin_bkg = np.array([np.trapezoid(background, hires_wl)])
+        nwave = 1
+        rebin = 1
+        wl = [0.5 * (tso['wl_max']+tso['wl_min'])]
+        half_widths = [0.5 * (tso['wl_max']-tso['wl_min'])]
+
+    elif tso['det_type'] == 'spectroscopy':
+        rebin = 1
+        if readout == 'faint':
+            rebin = 2
+        elif readout == 'ultra_faint':
+            rebin = 4
+        nwave = tso['nwave'] // rebin
+        binsize = tso['over_sampling'] * rebin
+
+        # Fluxes in photons per second
+        bin_flux = np.zeros(nwave)
+        bin_bkg = np.zeros(nwave)
+        i_start = tso['i_start']
+        for i in range(nwave):
+            i1 = i_start + i*binsize
+            i2 = i1 + binsize + 1
+            bin_flux[i] = np.trapezoid(flux[i1:i2], hires_wl[i1:i2])
+            bin_bkg[i] = np.trapezoid(background[i1:i2], hires_wl[i1:i2])
+
+        i_end = i_start + (nwave+1)*binsize
+        wl_edges = hires_wl[i_start:i_end:binsize]
+        # Center and half-widths of wavelength bins:
+        wl = 0.5 * (wl_edges[1:] + wl_edges[:-1])
+        half_widths = 0.5 * (wl_edges[1:] - wl_edges[:-1])
+
+    # Integrate over time
+    var_source = np.abs(bin_flux)
+
+    # Background number of photons
+    var_background = npix*(1+npix/nsky) * bin_bkg
+
+    # Dark number of photons
+    var_dark = rebin * npix*(1+npix/nsky) * tso['dark']
+    var_dark = np.tile(var_dark, nwave)
+
+    # Read-out noise
+    if readout == 'full_frame' or tso['det_type'] == 'photometry':
+        var_read = npix*(1+npix/nsky) * tso['read_noise'] * nreads
+
+    elif readout in ['bright', 'faint', 'ultra_faint']:
+        # Only two reads (instead of nsky) for the background:
+        var_read = npix*(1+2*npix/nsky**2) * tso['read_noise'] * nreads
+
+    var_read = np.tile(var_read, nwave)
+
+    return (
+        wl,
+        half_widths,
+        var_source,
+        var_background,
+        var_dark,
+        var_read,
+    )
 
 
 def bin_tso_data(
