@@ -10,7 +10,7 @@ import pickle
 import numpy as np
 import pandas as pd
 import pyratbay.spectrum as ps
-from .snr_waltzer import Detector
+from .snr_waltzer import Detector, calc_variances
 from . import sed
 from .utils import inst_convolution
 
@@ -95,11 +95,13 @@ def waltzer_sample(
     bands = [det.band for det in detectors]
 
     # WALTzER resolution (FWHM) and wavelength grid (angstrom)
-    inst_resolution = vis.resolution
+    inst_resolution = nuv.resolution
 
     # Higher resolution for models (will be binned down to WALTzER later)
-    resolution = 48_000.0
-    wl = ps.constant_resolution_spectrum(0.23, 2.0, resolution=resolution)
+    wl_min = nuv.hires_wl_min
+    wl_max = nuv.hires_wl_max
+    resolution = nuv.hires_resolution
+    wl = ps.constant_resolution_spectrum(wl_min, wl_max, resolution)
 
     # Target list file path
     data = pd.read_csv(csv_file, delimiter=',', comment='#')
@@ -151,7 +153,9 @@ def waltzer_sample(
         else:
             teff = stellar_temps[i]
             logg = 4.5
-            sed_file, sed_label, teff_match, logg_match = sed.find_closest_sed(teff, logg, sed_type)
+            sed_file, sed_label, teff_match, logg_match = sed.find_closest_sed(
+                teff, logg, sed_type,
+            )
 
         if sed_file in cache_seds:
             sed_flux = cache_seds[sed_file]
@@ -161,11 +165,8 @@ def waltzer_sample(
                 sed_wl, flux = np.loadtxt(sed_file, unpack=True)
             else:
                 sed_wl, flux = sed.load_sed(teff_match, logg_match, sed_type)
-            # Interpolate to regular grid and apply waltzer resolution
-            flux = np.interp(wl, sed_wl, flux)
-            sed_flux = inst_convolution(
-                wl, flux, inst_resolution, sampling_res=resolution,
-            )
+            # Interpolate to regular grid
+            sed_flux = np.interp(wl, sed_wl, flux)
             cache_seds[sed_file] = sed_flux
 
         # Normalize according to Vmag
@@ -178,27 +179,32 @@ def waltzer_sample(
 
         # SNR stats
         integ_time = exp_time[i] * n_obs
-        nuv_snr_stats = nuv.snr_stats(wl, flux, integ_time)
-        vis_snr_stats = vis.snr_stats(wl, flux, integ_time)
-        nir_snr_stats = nir.snr_stats(wl, flux, integ_time)[2:]
 
         # Note: this should mirror the GUI's run_waltzer() dictionary
         tso = {}
-        for j,det in enumerate(detectors):
+        for det in detectors:
             band = det.band
             # Source flux and variance in e- per second:
-            variances = det.calc_noise(wl, flux)
-            total_variance = np.sum(variances, axis=0)
-            band_flux = variances[0]
-            throughput = det.throughput(det._wl)
+            det.photon_spectrum(wl, flux)
+            throughput = det.throughput(det.hires_wl)
+            # no integration, no covolution yet
 
             tso[band] = {
-                'wl': det._wl,
-                'flux': band_flux,
-                'variance': total_variance,
-                'variances': variances,
+                'hires_wl': det.hires_wl,
+                'flux': det.e_flux,
+                'background': det.e_background,
                 'throughput': throughput,
+                'dark': det.dark,
+                'read_noise': det.read_noise,
                 'det_type': det.mode,
+                'npix': det.npix,
+                'nsky': det.nsky,
+                'nwave': det.nwave,
+                'i_start': det.i_start,
+                'over_sampling': det.over_sampling,
+                'resolution': det.resolution,
+                'hires_resolution': det.hires_resolution,
+                # Remove?
                 'half_widths': det.half_widths,
                 'wl_min': det.wl_min,
                 'wl_max': det.wl_max,
@@ -212,6 +218,14 @@ def waltzer_sample(
             'target': target,
         }
 
+        var_nuv = calc_variances(tso['nuv'])
+        var_vis = calc_variances(tso['vis'])
+        var_nir = calc_variances(tso['nir'])
+
+        nuv_snr_stats = nuv.snr_stats(var_nuv, integ_time)
+        vis_snr_stats = vis.snr_stats(var_vis, integ_time)
+        nir_snr_stats = nir.snr_stats(var_nir, integ_time)[2:]
+
         if obs_mode == 'transit':
             number = f'{i+1}/{ntargets}'
             print(
@@ -222,11 +236,13 @@ def waltzer_sample(
             )
         elif obs_mode == 'stare':
             # Flux SNR
-            snrs = [
-                tso[det.band]['flux'] * np.sqrt(integ_time/tso[det.band]['variance'])
-                for det in detectors
-            ]
-            median_flux_snrs = [np.median(snr) for snr in snrs]
+            source_snr = []
+            for var_data in [var_nuv, var_vis, var_nir]:
+                source = var_data[2]
+                variance = np.sum(np.array(var_data[2:]), axis=0)
+                snr = source / np.sqrt(variance) * np.sqrt(integ_time)
+                source_snr.append(snr)
+            median_flux_snrs = [np.median(snr) for snr in source_snr]
 
             number = f'{i+1}/{ntargets}'
             print(
