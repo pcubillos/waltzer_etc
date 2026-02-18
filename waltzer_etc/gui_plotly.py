@@ -7,6 +7,8 @@ import pyratbay.spectrum as ps
 from pyratbay.tools import u
 import plotly.graph_objects as go
 import plotly.express as px
+from  waltzer_etc.snr_waltzer import calc_variances
+
 
 __all__ = [
     'bin_spectrum',
@@ -47,45 +49,25 @@ depth_units_label = {
 }
 
 
-def bin_spectrum(wl, var_list, resolution=None, binsize=1):
+def bin_variances(wl, var_list, binsize=1):
     """
     Bin variance list
     """
     nvars = len(var_list)
-    if resolution == 0:
+    if binsize == 1:
         return wl, var_list
 
-    if resolution is None:
-        if binsize == 1:
-            return wl, var_list
+    nwave = len(wl)
+    bin_idx = np.arange(0, nwave, binsize)
+    counts = np.diff(np.append(bin_idx, nwave))
+    bin_wl = np.add.reduceat(wl, bin_idx) / counts
 
-        nwave = len(wl)
-        bin_idx = np.arange(0, nwave, binsize)
-        counts = np.diff(np.append(bin_idx, nwave))
-        bin_wl = np.add.reduceat(wl, bin_idx) / counts
-
-        bin_spectrum = [
-            np.add.reduceat(var_list[j], bin_idx)
-            for j in range(nvars)
-        ]
-        return bin_wl, bin_spectrum
-
-    wl_min = np.amin(wl)
-    wl_max = np.amax(wl)
-    bin_edges = ps.constant_resolution_spectrum(
-        wl_min, wl_max, resolution,
-    )
-    bin_edges = np.append(bin_edges, wl_max)
-    bin_wl = 0.5 * (bin_edges[1:] + bin_edges[:-1])
-
-    nbins = len(bin_wl)
-    bin_spectrum = np.zeros((nvars,nbins))
-    for i in range(nbins):
-        bin_mask = (wl>=bin_edges[i]) & (wl<bin_edges[i+1])
-        for j in range(nvars):
-            bin_spectrum[j,i] = np.sum(var_list[j][bin_mask])
-
+    bin_spectrum = [
+        np.add.reduceat(var_list[j], bin_idx)
+        for j in range(nvars)
+    ]
     return bin_wl, bin_spectrum
+
 
 
 def response_boundaries(wl, response, threshold=0.001):
@@ -367,27 +349,30 @@ def plotly_variances(
     wl_max = 0.0
     for j,band in enumerate(bands):
         var = tso[band]
+
         band_type = var['det_type']
         show_legend = True if j==0 else False
 
-        wl = var['wl']
+        var_data = calc_variances(var)
+        wl = var_data[0]
+        variances = var_data[2:]
         wl_min = np.amin([wl_min, 0.95*var['wl_min']])
         wl_max = np.amax([wl_max, 1.05*var['wl_max']])
 
         if band_type=="photometry":
             marker = dict(symbol="circle", size=5)
-            # TBD: get wl0, then calculate uneven X-error bars
+            # TBD: get wl0, then calculate uneven X-error bars?
             wl = [0.5*(var['wl_max']+var['wl_min'])]
             error = 0.5*(var['wl_max']-var['wl_min'])
             error_x = dict(
                 type='data', visible=True,
                 array=[error],
             )
-            variances = var['variances']
+            variances = var_data[2:]
         else:
             marker = dict()
             error_x = None
-            wl, variances = bin_spectrum(wl, var['variances'], binsize=binsize)
+            wl, variances = bin_variances(wl, variances, binsize=binsize)
         line = dict(shape='linear')
 
 
