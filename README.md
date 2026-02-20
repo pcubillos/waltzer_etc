@@ -1,12 +1,20 @@
 # :rocket: WALTzER ETC :telescope:
-ETC for the WALTzER F-mission concept
+> An ETC for the WALTzER F-mission concept
 
 ### Index
 
-- [Installation](#Instructions)
-- [Step 1: Generate SNR files](#Stage-1-run-the-SNR)
-- [Step 2: Simulate spectra](#Stage-2-simulate-transit-depth-spectra)
-- [Interactive GUI ETC](#WALTzER-TSO-GUI)
+- [Installation](#instructions)
+- [Stage 1](#stage-1)
+
+  - [Generate SNR files](#run-the-snr)
+  - [Additional configuration options](#additional-configuration-options)
+
+- [Stage 2](#stage-2)
+
+  - [Simulate transmission spectra](#simulate-transit-depth-spectra)
+  - [Simulate stare-mode spectra](#simulate-stare-mode-spectra)
+
+- [Interactive GUI ETC](#waltzer-tso-gui)
 
 
 ## Instructions
@@ -49,7 +57,9 @@ waltzer_etc/data/phoenix/phoenixm00_*.fits
 ```
 
 
-## Stage 1: run the SNR
+## Stage 1:
+
+### Run the SNR
 
 You will need an input .csv file with the targets to simulate (e.g., from a NASA Exoplanet Archive request). This file must contain these headers:
 - `'pl_name'`
