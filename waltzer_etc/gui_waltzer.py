@@ -13,14 +13,14 @@ import faicons as fa
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import scipy.interpolate as si
 from shiny import ui, render, reactive, req, App
 from shinywidgets import output_widget, render_plotly
 
 import pyratbay.constants as pc
 import pyratbay.spectrum as ps
 
-from waltzer_etc.utils import ROOT as ROOT
-from waltzer_etc.utils import inst_convolution
+from waltzer_etc.utils import ROOT, inst_convolution
 import waltzer_etc as waltz
 import waltzer_etc.sed as sed
 from gui_utils import (
@@ -75,39 +75,6 @@ def searchsorted_closest(array, val):
     return idx
 
 
-def quick_snr(tso, t_in, t_out=None, depth=0.0):
-    # Total times integrating in- and out-of-transit
-    bands = list(tso)
-
-    snr = []
-    t_error = []
-    for j,band in enumerate(bands):
-        sim = tso[band]
-        flux = sim['variance'][0]
-        var = np.sum(np.array(sim['variance']), axis=0)
-
-        # Transit depth and fluxes [e- per second]
-        #depth = model(wl)
-        flux_out = flux
-        flux_in = flux * (1.0-depth)
-        # Noise estimation for total number of e- collected
-        var_out = var * t_out
-        var_in = var * (1.0-depth) * t_in
-
-        # Error propagate to into transit-depth uncertainty
-        transit_depth_error = np.sqrt(
-            (1.0/t_in/flux_out)**2.0 * var_in +
-            (flux_in/t_out/flux_out**2.0)**2.0 * var_out
-        )
-        t_error.append(transit_depth_error/pc.ppm)
-
-        # Time-integrated SNR on the stellar flux
-        signal = flux_in*t_in + flux_out*t_out
-        snr.append(signal/np.sqrt(var_out))
-
-    return snr, t_error
-
-
 # The three amigos
 bands = ['nuv', 'vis', 'nir']
 detectors = {
@@ -158,20 +125,23 @@ inst_resolution = detectors['vis'].resolution
 cache_seds = {}
 
 # Higher resolution for models (will be bin down to WALTzER)
-# Make sure this is an integer factor of inst_resolution=6000
-resolution = 48_000.0
-wl = ps.constant_resolution_spectrum(0.23, 2.0, resolution=resolution)
+det = detectors['nuv']
+wl_min = det.hires_wl_min
+wl_max = det.hires_wl_max
+resolution = det.hires_resolution
+wl = ps.constant_resolution_spectrum(wl_min, wl_max, resolution)
+
 
 def waltz_model(wl_model, depth):
     """
     Resample model and apply WALTzER instrumental resolving power.
     """
     # interpolate
-    interp_depth = np.interp(
-        wl, wl_model, depth, left=np.nan, right=np.nan,
+    interp_depth = si.interp1d(
+        wl_model, depth, bounds_error=False, fill_value=np.nan
     )
     waltzer_depth = inst_convolution(
-        wl, interp_depth, inst_resolution, sampling_res=resolution,
+        wl, interp_depth(wl), inst_resolution, sampling_res=resolution,
         mode='valid',
     )
     edge = (wl.size - waltzer_depth.size) // 2
@@ -196,10 +166,7 @@ def load_sed(input, spectra, cache_seds):
             sed_type = sed_catalog[sed_model]['sed_type']
             sed_wl, flux = sed.load_sed(teff, logg, sed_type)
 
-        flux = np.interp(wl, sed_wl, flux)
-        sed_flux = inst_convolution(
-            wl, flux, inst_resolution, sampling_res=resolution,
-        )
+        sed_flux = np.interp(wl, sed_wl, flux)
         cache_seds[sed_model] = sed_flux
     return sed_flux
 
@@ -751,6 +718,16 @@ app_ui = ui.page_fluid(
                         max=50,
                         step=1,
                     ),
+                    ui.input_select(
+                        id='readout',
+                        label='Readout mode',
+                        choices={
+                            'full_frame': 'Full frame',
+                            #'bright': 'Bright',
+                            #'faint': 'Faint',
+                            #'ultra_faint': 'Ultra faint',
+                        }
+                    ),
                     style=card_style,
                     class_="px-2 pt-1 pb-2 m-0 gap-3",
                     fill=False,
@@ -1248,11 +1225,12 @@ def server(input, output, session):
         When a user chooses a run from display_tso_run, update the entire
         front end to match the run setup.
         """
-        tso_key = input.display_tso_run.get()
-        if tso_key is None:
-            return
-        key, tso_label = tso_key.split('_', maxsplit=1)
-        tso = tso_runs[key][tso_label]
+        pass
+        #tso_key = input.display_tso_run.get()
+        #if tso_key is None:
+        #    return
+        #key, tso_label = tso_key.split('_', maxsplit=1)
+        #tso = tso_runs[key][tso_label]
 
         #detector = get_detector(inst, mode, detectors)
 
@@ -1386,8 +1364,12 @@ def server(input, output, session):
         else:
             sed_flux = load_sed(input, spectra, cache_seds)
             flux = sed.normalize_vega(wl, sed_flux, norm_mag)
+            conv_flux = inst_convolution(wl, flux, inst_resolution, resolution)
             spectra['sed'][sed_label] = {
-                'wl': wl, 'flux': flux, 'filename':None,
+                'wl': wl,
+                'flux': flux,
+                'conv_flux': conv_flux,
+                'filename': None,
             }
             bookmarked_spectra['sed'].append(sed_label)
             bookmarked_sed.set(True)
@@ -1399,20 +1381,26 @@ def server(input, output, session):
         tso = {}
         for band in bands:
             det = detectors[band]
-            variances = det.calc_noise(wl, flux)
-            total_variance = np.sum(variances, axis=0)
-            band_flux = variances[0]
-            throughput = det.throughput(det.wl)
+            det.photon_spectrum(wl, flux)
+            throughput = det.throughput(det.hires_wl)
 
             # Note: this should mirror waltzer_sample()'s tso dictionary
             tso[band] = {
-                'wl': det.wl,
-                'flux': band_flux,
-                'variance': total_variance,
-                'variances': variances,
+                'hires_wl': det.hires_wl,
+                'flux': det.e_flux,
+                'background': det.e_background,
                 'throughput': throughput,
+                'dark': det.dark,
+                'read_noise': det.read_noise,
                 'det_type': det.mode,
-                'half_widths': det.half_widths,
+                'npix': det.npix,
+                'nsky': det.nsky,
+                'nwave': det.nwave,
+                'i_start': det.i_start,
+                'over_sampling': det.over_sampling,
+                'resolution': det.resolution,
+                'hires_resolution': det.hires_resolution,
+                #'half_widths': det.half_widths,
                 'wl_min': det.wl_min,
                 'wl_max': det.wl_max,
             }
@@ -1466,8 +1454,8 @@ def server(input, output, session):
     @reactive.effect
     @reactive.event(input.save_data_button)
     def save_data_button():
-        #print(input.tab.get())
-        if input.tab.get() == 'Stellar SED':
+        tab = input.tab.get()
+        if tab == 'Stellar SED':
             sed_type, sed_model, mag, sed_label = parse_sed(input, spectra)
             if sed_type is None or sed_type=='input':
                 return
@@ -1488,6 +1476,47 @@ def server(input, output, session):
             header = 'wavelength (micron)    flux (erg s-1 cm-2 cm-1)'
             np.savetxt(savefile, data, header=header)
             message = f'SED model saved to file: {repr(str(savefile))}'
+
+        elif tab == 'Noise':
+            tso_key = input.display_tso_run.get()
+            if tso_key is None:
+                return
+            key, tso_label = tso_key.split('_', maxsplit=1)
+            tso = tso_runs[key][tso_label]
+
+            plot_type = input.noise_plot.get()
+            bands = tso['meta']['bands']
+            if plot_type == 'variance':
+                header = (
+                    'wl(um)  source(e/s)  sky(e/s)  dark(e/s)  '
+                    'read_noise(e/s)  wl_half_width(um)'
+                )
+                wl = []
+                for band in bands:
+                    wavel = tso[band]['wl']
+                    if tso[band]['det_type'] == 'photometry':
+                        #throughput = tso[band]['throughput']
+                        #band = PassBand([wavel, throughput], wl=wavel)
+                        #wavel = [band.wl0]
+                        wavel = [0.5*(tso[band]['wl_max']+tso[band]['wl_min'])]
+                    wl.append(wavel)
+                wl = np.hstack(wl)
+                var = np.hstack([tso[band]['variances'] for band in bands])
+                hw = np.hstack([tso[band]['half_widths'] for band in bands])
+                data = np.vstack((wl, var, hw)).T
+
+            elif plot_type == 'snr':
+                header = (
+                    'wl(um)  flux_in(e)  flux_out(e)  '
+                    'var_in(e)  var_out(e)  wl_half_width(um) depth'
+                )
+                data = data_clipboard.get()
+
+            sed_type, sed_model, mag, sed_label = parse_sed(input, spectra)
+            filename = f'{sed_model}_waltzer_variances.dat'
+            savefile = Path(f'{current_dir}/{filename}')
+            np.savetxt(savefile, data, header=header)
+            message = f"Variances saved to file: '{savefile}'"
 
         else:
             # Make a filename from current TSO
@@ -1970,9 +1999,13 @@ def server(input, output, session):
             sed_flux = load_sed(input, spectra, cache_seds)
             # Normalize according to Vmag
             flux = sed.normalize_vega(wl, sed_flux, norm_mag)
+            conv_flux = inst_convolution(wl, flux, inst_resolution, resolution)
 
             spectra['sed'][sed_label] = {
-                'wl': wl, 'flux': flux, 'filename':None,
+                'wl': wl,
+                'flux': flux,
+                'conv_flux': conv_flux,
+                'filename':None,
             }
             bookmarked_spectra['sed'].append(sed_label)
         else:
@@ -2043,7 +2076,10 @@ def server(input, output, session):
             f_star = load_sed(input, spectra, cache_seds)
             depth_label, wave, depth = read_depth_spectrum(input, spectra, wl, f_star)
             if planet_model_type != 'Input':
-                spectra[obs_geometry][depth_label] = {'wl': wl, 'depth': depth}
+                spectra[obs_geometry][depth_label] = {
+                    'wl': wl,
+                    'depth': depth,
+                }
         else:
             bookmarked_spectra[obs_geometry].remove(depth_label)
 
@@ -2055,7 +2091,8 @@ def server(input, output, session):
         bookmarked_spectra[obs_geometry].clear()
         bookmarked_depth.set(False)
         update_depth_flag.set('cleared')  # trigger UI updates
-        ui.notification_show(f"Cleared all {obs_geometry} depth bookmarks", type="message", duration=3)
+        msg = f"Cleared all {obs_geometry} depth bookmarks"
+        ui.notification_show(msg, type="message", duration=3)
 
 
     @reactive.effect
@@ -2301,14 +2338,14 @@ def server(input, output, session):
         model_names = bookmarked_spectra['sed']
         if len(model_names) == 0:
             fig = go.Figure()
-            fig.update_layout(title='Bookmark SEDs models to show them here')
+            fig.update_layout(title='Bookmark SED models to show them here')
             return fig
 
         sed_models = []
         for model_name in model_names:
             model = dict(spectra['sed'][model_name])
             plot_model = dict(
-                flux=model['flux'],
+                flux=model['conv_flux'],
                 wl=model['wl'],
             )
             sed_models.append(plot_model)
@@ -2374,20 +2411,12 @@ def server(input, output, session):
 
         key, tso_label = tso_key.split('_', maxsplit=1)
         tso = tso_runs[key][tso_label]
-        bands = tso['meta']['bands']
 
         plot_type = input.noise_plot.get()
         binsize = wl_binsize.get()
         wl_scale = input.noise_wl_scale.get()
 
         if plot_type == 'variance':
-            head = 'wl(um)  source(e/s)  sky(e/s)  dark(e/s)  read_noise(e/s)  wl_half_width(um)'
-            wavel = np.hstack([tso[band]['wl'] for band in bands])
-            var = np.hstack([tso[band]['variances'] for band in bands])
-            hw = np.hstack([tso[band]['half_widths'] for band in bands])
-            clip = np.vstack((wavel, var, hw)).T
-            data_clipboard.set([head, clip])
-
             fig = plt.plotly_variances(
                 tso,
                 wl_scale=wl_scale,
@@ -2398,27 +2427,28 @@ def server(input, output, session):
         # elif plot_type == 'snr':
         efficiency = input.efficiency.get() * pc.percent
         n_obs = input.n_obs.get()
+        readout = input.readout.get()
         transit_dur = input.t_dur.get()
         obs_dur = input.obs_dur.get()
         obs_geometry = input.obs_geometry.get()
 
         # Read model
         f_star = load_sed(input, spectra, cache_seds)
-        depth_label, wavel, depth = read_depth_spectrum(input, spectra, wl, f_star)
+        lab, wavel, depth = read_depth_spectrum(input, spectra, wl, f_star)
         depth_model = wavel, depth
 
-        flux_data = waltz.simulate_fluxes(
+        flux_data = waltz.simulate_spectrum(
             tso, depth_model, obs_geometry,
             n_obs, transit_dur, obs_dur, binsize,
             efficiency=efficiency,
+            ret_variances=True,
         )
 
-        head = 'wl(um)  flux_in(e)  flux_out(e)  var_in(e)  var_out(e)  wl_half_width(um) depth'
         clip = np.vstack([
             np.hstack([d for d in f_data])
             for f_data in flux_data[1:]
         ]).T
-        data_clipboard.set([head, clip])
+        data_clipboard.set(clip)
 
         fig = plt.plotly_flux_snr(
             flux_data,
@@ -2444,6 +2474,7 @@ def server(input, output, session):
 
         efficiency = input.efficiency.get() * pc.percent
         n_obs = input.n_obs.get()
+        readout = input.readout.get()
 
         obs_geometry = input.obs_geometry.get()
         transit_dur = input.t_dur.get()
@@ -2459,13 +2490,14 @@ def server(input, output, session):
 
         # Transit-depth model at WALTzER resolving power
         f_star = load_sed(input, spectra, cache_seds)
-        depth_label, wavel, depth = read_depth_spectrum(input, spectra, wl, f_star)
-        depth_model = waltz_model(wavel, depth)
+        label, wavel, depth = read_depth_spectrum(input, spectra, wl, f_star)
+        depth_model = wavel, depth
 
+        noiseless = plot_type == 'snr'
         tso_data = waltz.simulate_spectrum(
             tso, depth_model, obs_geometry,
             n_obs, transit_dur, obs_dur, binsize,
-            efficiency=efficiency,
+            efficiency=efficiency, noiseless=noiseless,
         )
 
         head = 'wl(um)  depth  depth_error  wl_half_width(um)'
@@ -2481,10 +2513,11 @@ def server(input, output, session):
         wl_range = [wl_min, wl_max]
 
         if plot_type == 'tso':
+            convol_depth = waltz_model(wavel, depth)
             depth_units = 'percent'
             depth_range = [input.tso_depth_min.get(), input.tso_depth_max.get()]
             fig = plt.plotly_tso_spectra(
-                tso, tso_data, depth_model,
+                tso, tso_data, convol_depth,
                 model_label='model',
                 wl_range=wl_range, wl_scale=wl_scale,
                 depth_units=depth_units, depth_range=depth_range,
