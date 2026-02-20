@@ -204,6 +204,8 @@ ax.set_xlabel('Wavelength (um)')
 ax.set_ylabel('Depth error (ppm)')
 ```
 
+<img alt="WALTzER stare" src="https://github.com/pcubillos/waltzer_etc/blob/main/waltzer_etc/data/waltzer_demo_transmission.png" width="600">
+
 ### Simulate stare-mode spectra
 
 'Stare' observations on the source can also be simulated as in the script below. Note that the output spectra is in number of photons that arrived at Earth (instrumental throughput has been detrended).  To get the ground-truth model, users can set the ``noiseless=True`` argument in ``w.simulate_spectrum()``.
@@ -261,6 +263,7 @@ bx.set_ylabel('Source S/N')
 bx.set_xlabel('Wavelength (um)')
 ```
 
+<img alt="WALTzER stare" src="https://github.com/pcubillos/waltzer_etc/blob/main/waltzer_etc/data/waltzer_demo_stare.png" width="600">
 
 ## WALTzER TSO GUI
 
