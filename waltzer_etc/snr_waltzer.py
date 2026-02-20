@@ -5,7 +5,6 @@ __all__ = [
     'Detector',
     'calc_variances',
     'bin_tso_data',
-    'simulate_fluxes',
     'simulate_spectrum',
 ]
 
@@ -18,8 +17,7 @@ import pyratbay.constants as pc
 import pyratbay.spectrum as ps
 import scipy.interpolate as si
 
-from .utils import ROOT, PassBand, inst_convolution
-
+from .utils import ROOT, inst_convolution
 
 DEFAULT_DETS = {
     'nuv': f'{ROOT}/data/detectors/waltzer_nuv.cfg',
@@ -357,22 +355,27 @@ class Detector():
         return snr_min, snr_median, snr_max, transit_uncert
 
 
-def calc_variances(tso, readout='full_frame', exp_time=300.0):
+def calc_variances(
+        tso, readout='full_frame', transit_flux=None, exp_time=300.0,
+    ):
     """
     Compute the electrons per second signal of the source,
     background, dark, and read noise.
-
-    Convolve to WALTzER resolving power (FWHM=3000),
-    Integrate signals over WALTzER pixels.
+    This is done by convolving to WALTzER resolving power (FWHM=3000),
+    and then integrating the signals over the WALTzER pixel sampling.
 
     Parameters
     ----------
-    wl: 1D float array
-        Input wavelength array (micron).
-    flux: 1D float array
-        Input flux spectrum (mJy).
-    integ_time: Float
-        Total integration time (s).
+    tso: dictionary
+        A WALTzER tso output for a given target.
+    readout: String
+        WALTzER readout mode. Yet to be tested.
+    transit_flux: 1D float array
+        An optional second flux spectrum to compute the variances for.
+        Typically, an in-transit or an out-of-eclipse spectrum.
+        Must be sampled at tso['hires_wl']
+    exp_time: Float
+        Exposure time (s).
 
     Returns
     -------
@@ -388,6 +391,8 @@ def calc_variances(tso, readout='full_frame', exp_time=300.0):
         Dark-current variance.
     var_read: 1D float array
         Read-noise variance.
+    var_transit: 1D float array
+        Variance of transit_flux. Only returned when transit_flux is not None.
     """
     npix = tso['npix']
     nsky = tso['nsky']
@@ -401,9 +406,17 @@ def calc_variances(tso, readout='full_frame', exp_time=300.0):
         hires_wl, tso['flux'], tso['resolution'],  tso['hires_resolution'],
     )
 
+    has_transit = transit_flux is not None
+    if has_transit:
+        t_flux = inst_convolution(
+            hires_wl, transit_flux, tso['resolution'],  tso['hires_resolution'],
+        )
+
     # Integrate at each instrumental pixel to get photons s-1
     if tso['det_type'] == 'photometry':
         bin_flux = np.array([np.trapezoid(flux, hires_wl)])
+        if has_transit:
+            bin_t_flux = np.array([np.trapezoid(t_flux, hires_wl)])
         bin_bkg = np.array([np.trapezoid(background, hires_wl)])
         nwave = 1
         rebin = 1
@@ -421,6 +434,7 @@ def calc_variances(tso, readout='full_frame', exp_time=300.0):
 
         # Fluxes in photons per second
         bin_flux = np.zeros(nwave)
+        bin_t_flux = np.zeros(nwave)
         bin_bkg = np.zeros(nwave)
         i_start = tso['i_start']
         for i in range(nwave):
@@ -428,6 +442,8 @@ def calc_variances(tso, readout='full_frame', exp_time=300.0):
             i2 = i1 + binsize + 1
             bin_flux[i] = np.trapezoid(flux[i1:i2], hires_wl[i1:i2])
             bin_bkg[i] = np.trapezoid(background[i1:i2], hires_wl[i1:i2])
+            if has_transit:
+                bin_t_flux[i] = np.trapezoid(t_flux[i1:i2], hires_wl[i1:i2])
 
         i_end = i_start + (nwave+1)*binsize
         wl_edges = hires_wl[i_start:i_end:binsize]
@@ -455,6 +471,18 @@ def calc_variances(tso, readout='full_frame', exp_time=300.0):
 
     var_read = np.tile(var_read, nwave)
 
+    if has_transit:
+        var_transit = np.abs(bin_t_flux)
+        return (
+            wl,
+            half_widths,
+            var_source,
+            var_background,
+            var_dark,
+            var_read,
+            var_transit,
+        )
+
     return (
         wl,
         half_widths,
@@ -466,9 +494,10 @@ def calc_variances(tso, readout='full_frame', exp_time=300.0):
 
 
 def bin_tso_data(
-        wl, flux, var, throughput, half_width,
-        depth_model, obs_type, dt_in, dt_out,
-        det_type, binsize=None, resolution=None,
+        det_type, wl, half_width,
+        flux_in, var_in, dt_in,
+        flux_out=None, var_out=None, dt_out=0.0,
+        binsize=None, resolution=None,
     ):
     """
     Compute binned in- and out-of-transit spectra and their variances
@@ -476,58 +505,35 @@ def bin_tso_data(
 
     Parameters
     ----------
-    depth_model: scipy.interpolate.interp1d() object
-        Transit depth model as function of wavelength (micron).
-    obs_type: string
-        The observing geometry 'transit' or 'eclipse', or 'stare'.
-    dt_in: Float
-        In-transit integration time (seconds).
-    dt_out: Float
-        Out-of-transit (or stare) integration time (seconds).
     det_type: string
         Detector type: 'spectroscopy' or 'photometry'.
+    flux_in: 1D float arrays
+        In-transit flux (electrons per second).
+    var_in: 1D float arrays
+        In-transit variance (electrons per second).
+    dt_in: Float
+        In-transit or stare integration time (seconds).
+    flux_out: 1D float arrays
+        Out-of-transit flux (electrons per second).
+    var_out: 1D float arrays
+        Out-of-transit variance (electrons per second).
+    dt_out: Float
+        Out-of-transit integration time (seconds).
     binsize: Integer
-        Alternative to resolution binning, binsize indicates to bin
-        by number of pixels.
+        Bin down spectrum by number of pixels.
     resolution: Float
-        Output resolution.
+        Alternative to binsize, bin down at specified resolution.
     """
-    # Evaluate transit-depth in the band:
-    if det_type == 'photometry':
-        band_data = wl, throughput
-        band = PassBand(band_data, wl=depth_model.x)
-        if band.wl is None:
-            depth = np.nan
-        else:
-            depth = band.integrate(depth_model.y)
-        wl = np.array([band.wl0])
+    # Fluxes [e- collected] in and out of transit
+    # Variance estimations (e- collected) in and out of transit
+    flux_in *= dt_in
+    var_in *= dt_in
+    if flux_out is None or var_out is None or dt_out==0:
+        flux_out = flux_in * 0.0
+        var_out = var_in * 0.0
     else:
-        # TBD: convolve, integrate instead
-        depth = depth_model(wl)
-
-    if obs_type == 'transit':
-        # Fluxes [e- collected] in and out of transit
-        flux_out = flux * dt_out
-        flux_in = flux * (1.0-depth) * dt_in
-        # Variance estimations (e- collected) in and out of transit
-        var_out = var * dt_out
-        var_in = var * (1.0-depth) * dt_in
-
-    elif obs_type == 'eclipse':
-        # Fluxes [e- collected] in and out of eclipse
-        flux_out = flux * (1.0+depth) * dt_out
-        flux_in = flux * dt_in
-        # Variance estimations (e- collected) in and out of eclipse
-        var_out = var * (1.0+depth) * dt_out
-        var_in = var * dt_in
-
-    elif obs_type == 'stare':
-        # Fluxes [e- collected] in and out of eclipse
-        flux_out = flux * dt_out
-        flux_in = flux * 0.0
-        # Variance estimations (e- collected) in and out of eclipse
-        var_out = var * dt_out
-        var_in = var * 0.0
+        flux_out *= dt_out
+        var_out *= dt_out
 
     if binsize is None and resolution is None:
         binsize = 1
@@ -541,7 +547,7 @@ def bin_tso_data(
     )
 
     if no_binning:
-        return wl, flux_in, flux_out, var_in, var_out, half_width, depth
+        return wl, flux_in, flux_out, var_in, var_out, half_width
 
     # Bin by binsize
     if resolution is None:
@@ -551,11 +557,10 @@ def bin_tso_data(
 
         bin_widths = np.add.reduceat(half_width, bin_idx)
         bin_wl = np.add.reduceat(wl, bin_idx) / counts
-        bin_depth = np.add.reduceat(depth, bin_idx) / counts
 
         bin_in = np.add.reduceat(flux_in, bin_idx)
-        bin_out = np.add.reduceat(flux_out, bin_idx)
         bin_var_in = np.add.reduceat(var_in, bin_idx)
+        bin_out = np.add.reduceat(flux_out, bin_idx)
         bin_var_out = np.add.reduceat(var_out, bin_idx)
 
     # Bin by resolution
@@ -572,7 +577,6 @@ def bin_tso_data(
 
         bin_wl = 0.5 * (bin_edges[1:] + bin_edges[:-1])
         bin_widths = bin_wl - bin_edges[:-1]
-        bin_depth = ps.bin_spectrum(bin_wl, wl, depth)
         nbins = len(bin_wl)
         bin_out = np.zeros(nbins)
         bin_in = np.zeros(nbins)
@@ -592,18 +596,18 @@ def bin_tso_data(
         bin_var_in,
         bin_var_out,
         bin_widths,
-        bin_depth,
     )
 
 
-def simulate_fluxes(
+def simulate_spectrum(
         tso, depth_model=None, obs_type='transit', n_obs=1,
         transit_dur=None, obs_dur=None,
         binsize=None, resolution=None, noiseless=False,
-        efficiency=None,
+        efficiency=None, ret_variances=False,
     ):
     """
-    Simulate WALTzER TSO fluxes and variances during an observation.
+    Simulate a WALTzER TSO observation, that is, a transit or eclipse
+    observation, or a stare on the source.
 
     Parameters
     ----------
@@ -613,29 +617,61 @@ def simulate_fluxes(
         Transit depth model, array of shape [2,nwave] with:
         - wavelength (micron)
         - transit depth
+        (sample at R ~50000 for best results)
         Ignore for stare mode.
-    obs_type: string
-        The observing geometry 'transit' or 'eclipse', or 'stare'.
+    obs_type: String
+        The observing geometry 'transit', 'eclipse', or 'stare'.
     n_obs: Integer
-        Number of observations to co-add.
+        Number of transits to co-add.
     transit_dur: Float
         In-transit time (hours).
+        Default, take transit duration (h) from tso dictionary.
         Ignore for stare mode.
     obs_dur: Float
-        Total observation duration (hours).
+        Total observation duration (h).
+        If None, assume an out-of-transit duration of 2*max(t_dur, 1h).
     binsize: Integer
         Binning over spectral axis, in number of pixels.
+        Output resolution will be R = 6000.0 / binsize
     resolution: Float
         Alternative to binsize, set output resolution.
+        Note this input take precedence over binsize.
     noiseless: Bool
-        For stare obs_type, set to True to prevent adding scatter
-        the simulated spectrum.
+        If False, add scatter to simulated spectrum according to
+        the signal's uncertainty.  Set to True to return the ground truth
     efficiency: Float
-        WALTzER duty cycle efficiency. If None, taken from tso.
+        WALTzER duty cycle efficiency. If None, take value from tso.
+    ret_variances: Bool
+        Flag to return in- and out-of-transit variances (see below).
 
     Returns
     -------
     For transit or eclipse obs_type:
+        bands: 1D string list
+            The WALTzER band names.
+        bin_wl: List of 1D float arrays
+            WALTzER wavelength array for NUV, VIS, and NIR bands (micron)
+        bin_depth: List of 1D float arrays
+            WALTzER transit depths for each band
+        bin_error: List of 1D float arrays
+            WALTzER transit-depth uncertainties for each band
+        bin_widths: List of 1D float arrays
+            Wavelength half-widths of WALTzER data points (micron).
+
+    For stare obs_type:
+        bands: 1D string list
+            WALTzER band names.
+        bin_wl: list of 1D float arrays
+            Binned wavelength arrays for each band (micron).
+        bin_flux: list of 1D float arrays
+            Binned collected fluxes (number of electrons).
+            (the detector throughputs have been corrected-out from these).
+        bin_error: list of 1D float arrays
+            Binned-flux uncertainties.
+        bin_widths: list of 1D float arrays
+            Bin-widths for each data point.
+
+    If ret_variances is True:
         bands: 1D string list
             WALTzER band names.
         bin_wl: list of 1D float arrays
@@ -652,168 +688,6 @@ def simulate_fluxes(
             Bin-widths for each data point.
         bin_depth: list of 1D float arrays
             Binned transit/eclipse depths for each band.
-
-    For stare obs_type:
-        bands: 1D string list
-            WALTzER band names.
-        bin_wl: list of 1D float arrays
-            Binned wavelength arrays for each band (micron).
-        bin_flux: list of 1D float arrays
-            Binned collected fluxes (number of electrons).
-            (the detector throughputs have been corrected-out from these).
-        bin_var: list of 1D float arrays
-            Binned-flux variances.
-        bin_widths: list of 1D float arrays
-            Bin-widths for each data point.
-    """
-    if obs_type == 'stare':
-        transit_dur = 0.0
-        depth_model = 0.0
-
-    # An interpolator to eval the depth over the WALTzER bands
-    if np.isscalar(depth_model):
-        res = 6000.0
-        wl_model = ps.constant_resolution_spectrum(0.23, 20.0, res)
-        depth = np.tile(depth_model, len(wl_model))
-    else:
-        wl_model, depth = depth_model
-    model = si.interp1d(
-        wl_model, depth, kind='slinear',
-        bounds_error=False, fill_value='extrapolate',
-    )
-
-    if efficiency is None:
-        efficiency = tso['meta']['efficiency']
-    total_time = (obs_dur * 3600) * efficiency * n_obs
-    dt_in = (transit_dur * 3600) * efficiency * n_obs
-    dt_out = total_time - dt_in
-
-    bands = tso['meta']['bands']
-    data = []
-    for band in bands:
-        det = tso[band]
-        wl = det['wl']
-        flux = det['flux']
-        var = det['variance']
-        throughput = det['throughput']
-        half_width = det['half_widths']
-
-        bin_data = bin_tso_data(
-            wl, flux, var, throughput, half_width,
-            model, obs_type, dt_in, dt_out,
-            det['det_type'], binsize, resolution,
-        )
-
-        if obs_type == 'stare':
-            # Undo throughput scaling
-            if det['det_type'] == 'photometry':
-                det_wl = det['wl_min'], det['wl_max']
-                det_resp = np.tile(det['throughput'], 2)
-            else:
-                det_wl = wl
-                det_resp = det['throughput']
-            throughput = si.interp1d(
-                det_wl, det_resp, kind='slinear',
-                bounds_error=False, fill_value='extrapolate',
-            )
-            response = throughput(wl)
-            bin_out = bin_data[2] / response
-            bin_var = bin_data[4] / response**2.0
-            if not noiseless:
-                np.random.seed(random.randint(0, 100000))
-                rand_noise = np.random.normal(0.0, np.sqrt(bin_var))
-                bin_out += rand_noise
-            bin_data = (
-                bin_data[0],
-                bin_data[1], bin_out,
-                bin_data[3], bin_var,
-                bin_data[5], bin_data[6],
-            )
-
-        data.append(bin_data)
-
-
-    bin_wl = [d[0] for d in data]
-    bin_in = [d[1] for d in data]
-    bin_out = [d[2] for d in data]
-    bin_var_in = [d[3] for d in data]
-    bin_var_out = [d[4] for d in data]
-    bin_widths = [d[5] for d in data]
-    bin_depth = [d[6] for d in data]
-
-    if obs_type == 'stare':
-        return (
-            bands,
-            bin_wl,
-            bin_out,
-            bin_var_out,
-            bin_widths,
-        )
-
-    return (
-        bands,
-        bin_wl,
-        bin_in,
-        bin_out,
-        bin_var_in,
-        bin_var_out,
-        bin_widths,
-        bin_depth,
-    )
-
-
-def simulate_spectrum(
-        tso, depth_model, obs_type='transit', n_obs=1,
-        transit_dur=None, obs_dur=None,
-        binsize=None, resolution=None, noiseless=False,
-        efficiency=None,
-    ):
-    """
-    Simulate a WALTzER TSO observation by combining SNR data with a
-    transmission spectrum.
-
-    Parameters
-    ----------
-    tso: Dictionary
-        A WALTzER TSO data, output from running waltz (stage 1, see example).
-    depth_model: 2D float array
-        Transit depth model, array of shape [2,nwave] with:
-        - wavelength (micron)
-        - transit depth
-        (sample at R > ~10000 for best results)
-    obs_type: string
-        The observing geometry 'transit' or 'eclipse'.
-    n_obs: Integer
-        Number of transits to co-add.
-    transit_dur: Float
-        If not None, overwrite transit duration (h) from tso dictionary.
-    obs_dur: Float
-        Total observation duration (h).
-        If None, assume an out-of-transit duration of 2*max(t_dur, 1h).
-    binsize: Integer
-        Bin-down output spectrum by given bin size.
-        Output resolution will be R = 6000.0 / binsize
-        Note that 'resolution' input take precedence over binsize.
-    resolution: Float
-        Bin-down output spectrum by given resolution.
-        Note this input take precedence over binsize.
-    noiseless: Bool
-        Set to True to prevent adding scatter the simulated spectrum.
-    efficiency: Float
-        WALTzER duty-cycle efficiency.
-
-    Returns
-    -------
-    bands: 1D string list
-        The WALTzER band names.
-    walz_wl: List of 1D float arrays
-        WALTzER wavelength array for NUV, VIS, and NIR bands (micron)
-    walz_spec: List of 1D float arrays
-        WALTzER transit depths for each band
-    walz_err: List of 1D float arrays
-        WALTzER transit-depth uncertainties for each band
-    walz_widths: List of 1D float arrays
-        Wavelength half-widths of WALTzER data points (micron).
 
     Examples
     --------
@@ -882,18 +756,20 @@ def simulate_spectrum(
     >>> ax.set_xlabel('Wavelength (um)')
     >>> ax.set_ylabel('Depth error (ppm)')
     """
+    if depth_model is None or obs_type == 'stare':
+        depth_model = 0.0
+        transit_dur = 0.0
+
     # An interpolator to eval the depth over the WALTzER bands
     if np.isscalar(depth_model):
-        wl_model = ps.constant_resolution_spectrum(0.23, 20.0, resolution=6000)
-        depth = np.tile(depth_model, len(wl_model))
-        fill_value = 'extrapolate'
+        wl_model = [0.23, 20.0]
+        depth = np.tile(depth_model, 2)
     else:
         wl_model, depth = depth_model
-        fill_value = np.nan
 
     model = si.interp1d(
         wl_model, depth, kind='slinear',
-        bounds_error=False, fill_value=fill_value,
+        bounds_error=False, fill_value=np.nan,
     )
 
     if efficiency is None:
@@ -912,53 +788,116 @@ def simulate_spectrum(
     dt_out = total_time - dt_in
 
     bands = tso['meta']['bands']
+    walz = dict(
+        wl = [],
+        depth = [],
+        flux = [],
+        flux_out = [],
+        error = [],
+        var = [],
+        var_out = [],
+        width = [],
+    )
 
-    walz_wl = []
-    walz_depth = []
-    walz_err = []
-    walz_widths = []
     for band in bands:
         det = tso[band]
-        wl = det['wl']
-        flux = det['flux']
-        var = det['variance']
-        throughput = det['throughput']
-        half_width = det['half_widths']
+        # Fluxes [e- collected] in-transit or out-of-eclipse
+        depth = model(det['hires_wl'])
+        if obs_type == 'transit':
+            transit_flux = det['flux'] * (1.0-depth)
+        elif obs_type == 'eclipse':
+            transit_flux = det['flux'] * (1.0+depth)
+        elif obs_type == 'stare':
+            transit_flux = None
+            dt_in = total_time
+
+        # Data at WALTzER sampling and resolving power
+        var_data = calc_variances(det, transit_flux=transit_flux)
+        wl = var_data[0]
+        half_width = var_data[1]
+        flux = var_data[2]
+        variance = np.sum(np.array(var_data[2:6]), axis=0)
+
+        if obs_type == 'stare':
+            flux_out = None
+            var_out = None
+        else:
+            # eclipse
+            flux_out = var_data[6]
+            var_out = np.sum(np.array(var_data[3:7]), axis=0)
+            if obs_type == 'transit':
+                flux, flux_out = flux_out, flux
+                variance, var_out = var_out, variance
 
         bin_data = bin_tso_data(
-            wl, flux, var, throughput, half_width,
-            model, obs_type, dt_in, dt_out,
-            det['det_type'], binsize, resolution,
+            det['det_type'], wl, half_width,
+            flux, variance, dt_in,
+            flux_out, var_out, dt_out,
+            binsize, resolution,
         )
 
-        bin_wl = bin_data[0]
-        bin_in = bin_data[1]
-        bin_out = bin_data[2]
-        bin_var_in = bin_data[3]
-        bin_var_out = bin_data[4]
-        bin_widths = bin_data[5]
-        bin_depth = bin_data[6]
-        # Error propagation into transit-depth uncertainty
-        bin_err = np.sqrt(
-            (dt_out / dt_in / bin_out)**2.0 * bin_var_in +
-            (bin_in / dt_in * dt_out / bin_out**2.0)**2.0 * bin_var_out
-        )
-        # The numpy random system must have its seed reinitialized in
-        # each sub-processes to avoid identical 'random' steps.
-        # random.randomint is process- and thread-safe.
-        np.random.seed(random.randint(0, 100000))
-        rand_noise = np.random.normal(0.0, bin_err)
-        if noiseless:
-            rand_noise *= 0.0
+        if obs_type == 'stare':
+            # Undo throughput scaling
+            if det['det_type'] == 'spectroscopy':
+                det_wl = det['hires_wl']
+                det_resp = det['throughput']
+            else:
+                det_wl = det['wl_min'], det['wl_max']
+                det_resp = det['throughput'][0:2]
+            # TBD: band-integrate instead of interpolating
+            throughput = si.interp1d(
+                det_wl, det_resp, kind='slinear',
+                bounds_error=False, fill_value=0.0,
+            )
+            response = throughput(bin_data[0])
+            bin_flux = bin_data[1] / response
+            bin_err = np.sqrt(bin_data[3] / response**2.0)
+            if not noiseless:
+                np.random.seed(random.randint(0, 100_000))
+                rand_noise = np.random.normal(0.0, bin_err)
+                bin_flux += rand_noise
+            walz['wl'].append(bin_data[0])
+            walz['flux'].append(bin_flux)
+            walz['error'].append(bin_err)
+            walz['width'].append(bin_data[5])
 
-        bin_spec = bin_depth + rand_noise
+        elif ret_variances:
+            walz['wl'].append(bin_data[0])
+            walz['flux'].append(bin_data[1])
+            walz['flux_out'].append(bin_data[2])
+            walz['var'].append(bin_data[3])
+            walz['var_out'].append(bin_data[4])
+            walz['width'].append(bin_data[5])
 
-        walz_wl.append(bin_wl)
-        walz_depth.append(bin_spec)
-        walz_err.append(bin_err)
-        walz_widths.append(bin_widths)
+        elif obs_type in ['transit', 'eclipse']:
+            bin_in = bin_data[1]
+            bin_out = bin_data[2]
+            bin_var_in = bin_data[3]
+            bin_var_out = bin_data[4]
+            bin_depth = 1.0 - (bin_in/dt_in) / (bin_out/dt_out)
+            # Error propagation into transit-depth uncertainty
+            bin_err = np.sqrt(
+                (dt_out / dt_in / bin_out)**2.0 * bin_var_in +
+                (bin_in / dt_in * dt_out / bin_out**2.0)**2.0 * bin_var_out
+            )
+            if not noiseless:
+                # The numpy random system must have its seed reinitialized
+                # in each sub-processes to avoid identical 'random' steps.
+                # random.randomint is process- and thread-safe.
+                np.random.seed(random.randint(0, 100_000))
+                rand_noise = np.random.normal(0.0, bin_err)
+                bin_depth += rand_noise
 
-    return bands, walz_wl, walz_depth, walz_err, walz_widths
+            walz['wl'].append(bin_data[0])
+            walz['depth'].append(bin_depth)
+            walz['error'].append(bin_err)
+            walz['width'].append(bin_data[5])
 
+    # Unpack returns
+    rets = [
+        val
+        for val in walz.values()
+        if len(val) > 0
+    ]
 
-
+    return [bands] +  rets
