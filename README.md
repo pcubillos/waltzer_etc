@@ -204,7 +204,7 @@ ax.set_xlabel('Wavelength (um)')
 ax.set_ylabel('Depth error (ppm)')
 ```
 
-<img alt="WALTzER stare" src="https://github.com/pcubillos/waltzer_etc/blob/main/waltzer_etc/data/waltzer_demo_transmission.png" width="600">
+<img alt="WALTzER transit" src="https://github.com/pcubillos/waltzer_etc/blob/main/waltzer_etc/data/waltzer_demo_transmission.png" width="600">
 
 ### Simulate stare-mode spectra
 
