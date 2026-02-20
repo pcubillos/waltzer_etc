@@ -1,6 +1,14 @@
 # :rocket: WALTzER ETC :telescope:
 ETC for the WALTzER F-mission concept
 
+### Index
+
+- [Installation](#Instructions)
+- [Step 1: Generate SNR files](#Stage-1-run-the-SNR)
+- [Step 2: Simulate spectra](#Stage-2-simulate-transit-depth-spectra)
+- [Interactive GUI ETC](#WALTzER-TSO-GUI)
+
+
 ## Instructions
 
 ### Install code
