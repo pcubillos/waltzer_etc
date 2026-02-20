@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## Version 0.3.4 (2026-02-20)
+
+- Refactored code to perform more accurate transit-depth SNRs, performing calculations at high-resolution, then convolving to WALTzER resolving power, and lastly integrating over WALTzER pixels.
+- Implemented '--hires' argument to command line call, allowing to set the internal high-resolution sampling.  Default (and minimum accepted value) is 48_000.
+- Removed simulate_fluxes() function, now incorporated into simulate_spectrum().
+
+## Version 0.3.3 (2026-02-12)
+
+- Updated throughputs
+
 ## Version 0.3.2 (2026-02-10)
 
 - Enabled '--obs_mode' argument to command line call, which allows to set 'stare' mode (i.e., no transits).
