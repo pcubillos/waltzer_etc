@@ -24,6 +24,7 @@ def waltzer_sample(
          n_obs=10,
          sed_type='llmodels',
          obs_mode='transit',
+         hires=48_000,
     ):
     """
     WALTzER Exposure time calculator
@@ -88,9 +89,9 @@ def waltzer_sample(
     >>> n_obs = 10
     """
     # The three amigos
-    nuv = Detector('nuv', diameter)
-    vis = Detector('vis', diameter)
-    nir = Detector('nir', diameter)
+    nuv = Detector('nuv', diameter, hires=hires)
+    vis = Detector('vis', diameter, hires=hires)
+    nir = Detector('nir', diameter, hires=hires)
     detectors = nuv, vis, nir
     bands = [det.band for det in detectors]
 

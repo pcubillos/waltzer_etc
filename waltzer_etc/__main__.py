@@ -5,6 +5,7 @@ import argparse
 import os
 import sys
 
+import numpy as np
 from shiny import run_app
 from .__init__ import __version__
 from .sample_snr import waltzer_sample
@@ -89,6 +90,12 @@ def parse_args():
         help="Transit duration in hours; if set, calculate statistics assuming a fixed transit duration for all targets. Else, take values from input .csv target list. (default: None).",
     )
     parser.add_argument(
+        "--hires",
+        type=float,
+        default=None,
+        help="Set the internal high-resolution sampling used by the WALTzER calculations.  Only values higher than 48_000 will be accepted. Note that higher-resolutions will lead to larger output files and slower calculations. Use only when needed. (default: 48_000).",
+    )
+    parser.add_argument(
         "--sed",
         choices=["llmodels", "bt_settl", "phoenix"],
         default="llmodels",
@@ -116,10 +123,23 @@ def main():
     """
     args = parse_args()
 
+    if args.hires is None:
+        args.hires = 48_000
+    elif args.hires <= 48_000:
+        print('Setting high-resolution sampling to minimum value of R ~48_000')
+        args.hires = np.amax([args.hires, 48_000])
+    else:
+        print(f"Setting high-resolution sampling to R ~{args.hires:_.0f}")
     if args.tso:
         reload = args.debug
         app = os.path.realpath(os.path.dirname(__file__)) + '/gui_waltzer.py'
-        run_app(app, reload=reload, launch_browser=True, port=8001, dev_mode=True)
+        run_app(
+            app,
+            reload=reload,
+            launch_browser=True,
+            port=8001,
+            dev_mode=True,
+        )
         return
 
     waltzer_sample(
@@ -131,6 +151,7 @@ def main():
          n_obs=args.nobs,
          sed_type=args.sed,
          obs_mode=args.obs_mode,
+         hires=args.hires,
     )
     sys.exit(0)
 

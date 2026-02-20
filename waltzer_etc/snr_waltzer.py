@@ -108,7 +108,7 @@ def throughput(file, primary_area=1.0):
 
 
 class Detector():
-    def __init__(self, detector_cfg, diameter=35.0):
+    def __init__(self, detector_cfg, diameter=35.0, hires=48_000):
         """
         detector_cfg = 'detectors/waltzer_nuv.cfg'
         det = Detector(detector_cfg)
@@ -120,6 +120,9 @@ class Detector():
             Or 'nuv', 'vis', 'nir' to use one of the default configurations.
         diameter: float
             Telescope primary-mirror diameter (cm).
+        hires: Float
+            Internal high-resolution sampling. Input value will be
+            adjusted to an integer factor of the WALTzER HWHM.
 
         Examples
         --------
@@ -164,8 +167,12 @@ class Detector():
         margin_right = 2*self.wl_max/self.resolution
 
         # High-resolution sampling
-        over_sampling = 8
-        self.hires_resolution = 2.0*self.resolution * over_sampling
+        # (must be an integer factor of WALTzER HWHM to simplify integrations)
+        resolution = 2.0*self.resolution
+        over_sampling = int(np.round(hires / resolution))
+        over_sampling = np.amax([8, over_sampling])
+
+        self.hires_resolution = resolution * over_sampling
         self.hires_wl_min = 0.23
         self.hires_wl_max = 2.0
         hires_wl = ps.constant_resolution_spectrum(
