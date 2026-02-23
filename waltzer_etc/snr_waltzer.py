@@ -378,7 +378,6 @@ class Detector():
 
 def calc_variances(
         tso, readout='full_frame', transit_flux=None, exp_time=300.0,
-        tight_beam=False,
     ):
     """
     Compute the electrons per second signal of the source,
@@ -477,10 +476,7 @@ def calc_variances(
     var_source = np.abs(bin_flux)
 
     # Wavelength-dependent cross dispersion size
-    if tight_beam:
-        npix = tso['cross_dispersion'][::rebin]
-    else:
-        npix = np.tile(npix, len(wl))
+    npix = tso['cross_dispersion'][::rebin]
 
     # Background number of photons
     var_background = npix*(1+npix/nsky) * bin_bkg
@@ -630,7 +626,6 @@ def simulate_spectrum(
         transit_dur=None, obs_dur=None,
         binsize=None, resolution=None, noiseless=False,
         efficiency=None, ret_variances=False,
-        tight_beam=False,
     ):
     """
     Simulate a WALTzER TSO observation, that is, a transit or eclipse
@@ -839,7 +834,7 @@ def simulate_spectrum(
             dt_in = total_time
 
         # Data at WALTzER sampling and resolving power
-        var_data = calc_variances(det, transit_flux=transit_flux, tight_beam=tight_beam)
+        var_data = calc_variances(det, transit_flux=transit_flux)
         wl = var_data[0]
         half_width = var_data[1]
         flux = var_data[2]

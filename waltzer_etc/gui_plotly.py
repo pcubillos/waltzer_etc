@@ -333,7 +333,6 @@ def plotly_variances(
         wl_range=None,
         wl_scale='linear',
         binsize=None,
-        tight_beam=False,
     ):
     """
     Make a plotly figure of the variances.
@@ -354,7 +353,7 @@ def plotly_variances(
         band_type = var['det_type']
         show_legend = True if j==0 else False
 
-        var_data = calc_variances(var, tight_beam=tight_beam)
+        var_data = calc_variances(var)
         wl = var_data[0]
         variances = var_data[2:]
         wl_min = np.amin([wl_min, 0.95*var['wl_min']])
