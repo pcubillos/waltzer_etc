@@ -2408,7 +2408,7 @@ def server(input, output, session):
         if plot_type == 'variance':
             bands = tso['meta']['bands']
             var_data = [
-                waltz.calc_variances(tso[band])
+                waltz.calc_variances(tso[band], readout=readout)
                 for band in bands
             ]
 
@@ -2441,6 +2441,7 @@ def server(input, output, session):
             flux_data = waltz.simulate_spectrum(
                 tso, depth_model, obs_geometry,
                 n_obs, transit_dur, obs_dur, binsize,
+                readout=readout,
                 efficiency=efficiency,
                 ret_variances=True,
             )
@@ -2498,6 +2499,7 @@ def server(input, output, session):
         tso_data = waltz.simulate_spectrum(
             tso, depth_model, obs_geometry,
             n_obs, transit_dur, obs_dur, binsize,
+            readout=readout,
             efficiency=efficiency, noiseless=noiseless,
         )
 
@@ -2535,12 +2537,6 @@ def server(input, output, session):
                 y_label = f'{obs_geometry}-depth SNR'
             )
 
-        #elif plot_type == 'uncertainties':
-        #    fig = plots.plotly_tso_fluxes(
-        #        tso,
-        #        wl_range=wl_range, wl_scale=wl_scale,
-        #        obs_geometry=obs_geometry,
-        #    )
         return fig
 
 

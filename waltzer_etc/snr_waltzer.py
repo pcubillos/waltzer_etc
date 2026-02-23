@@ -390,7 +390,7 @@ def calc_variances(
     tso: dictionary
         A WALTzER tso output for a given target.
     readout: String
-        WALTzER readout mode. Yet to be tested.
+        WALTzER readout mode. Yet to be fully tested.
     transit_flux: 1D float array
         An optional second flux spectrum to compute the variances for.
         Typically, an in-transit or an out-of-eclipse spectrum.
@@ -625,7 +625,7 @@ def simulate_spectrum(
         tso, depth_model=None, obs_type='transit', n_obs=1,
         transit_dur=None, obs_dur=None,
         binsize=None, resolution=None, noiseless=False,
-        efficiency=None, ret_variances=False,
+        readout='full_frame', efficiency=None, ret_variances=False,
     ):
     """
     Simulate a WALTzER TSO observation, that is, a transit or eclipse
@@ -661,6 +661,8 @@ def simulate_spectrum(
     noiseless: Bool
         If False, add scatter to simulated spectrum according to
         the signal's uncertainty.  Set to True to return the ground truth
+    readout: String
+        WALTzER readout mode. Yet to be fully tested, set at your own risk.
     efficiency: Float
         WALTzER duty cycle efficiency. If None, take value from tso.
     ret_variances: Bool
@@ -834,7 +836,9 @@ def simulate_spectrum(
             dt_in = total_time
 
         # Data at WALTzER sampling and resolving power
-        var_data = calc_variances(det, transit_flux=transit_flux)
+        var_data = calc_variances(
+            det, transit_flux=transit_flux, readout=readout,
+        )
         wl = var_data[0]
         half_width = var_data[1]
         flux = var_data[2]
