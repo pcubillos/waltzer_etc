@@ -7,7 +7,6 @@ import pyratbay.spectrum as ps
 from pyratbay.tools import u
 import plotly.graph_objects as go
 import plotly.express as px
-from  waltzer_etc.snr_waltzer import calc_variances
 
 
 __all__ = [
@@ -329,7 +328,8 @@ def plotly_depth_spectra(
 
 
 def plotly_variances(
-        tso,
+        var_data,
+        bands,
         wl_range=None,
         wl_scale='linear',
         binsize=None,
@@ -344,37 +344,26 @@ def plotly_variances(
     labels = ['source', 'sky', 'dark', 'read noise']
     colors = [blue,'tomato', green, 'black']
 
-    bands = tso['meta']['bands']
     wl_min = 2.0
     wl_max = 0.0
     for j,band in enumerate(bands):
-        var = tso[band]
+        wl = np.array(var_data[j][0])
+        half_width = np.array(var_data[j][1])
+        variances = var_data[j][2:6]
 
-        band_type = var['det_type']
         show_legend = True if j==0 else False
+        wl_min = np.amin([wl_min, 0.95*np.amin(wl-half_width)])
+        wl_max = np.amax([wl_max, 1.05*np.amax(wl+half_width)])
 
-        var_data = calc_variances(var)
-        wl = var_data[0]
-        variances = var_data[2:]
-        wl_min = np.amin([wl_min, 0.95*var['wl_min']])
-        wl_max = np.amax([wl_max, 1.05*var['wl_max']])
-
-        if band_type=="photometry":
+        # Photometry
+        if band == 'nir':
             marker = dict(symbol="circle", size=5)
-            # TBD: get wl0, then calculate uneven X-error bars?
-            wl = [0.5*(var['wl_max']+var['wl_min'])]
-            error = 0.5*(var['wl_max']-var['wl_min'])
-            error_x = dict(
-                type='data', visible=True,
-                array=[error],
-            )
-            variances = var_data[2:]
+            error_x = dict(type='data', visible=True, array=half_width)
         else:
             marker = dict()
             error_x = None
             wl, variances = bin_variances(wl, variances, binsize=binsize)
         line = dict(shape='linear')
-
 
         for i in range(len(labels)):
             fig.add_trace(go.Scatter(
