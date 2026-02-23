@@ -12,7 +12,6 @@ import pandas as pd
 import pyratbay.spectrum as ps
 from .snr_waltzer import Detector, calc_variances
 from . import sed
-from .utils import inst_convolution
 
 
 def waltzer_sample(
@@ -198,6 +197,7 @@ def waltzer_sample(
                 'dark': det.dark,
                 'read_noise': det.read_noise,
                 'det_type': det.mode,
+                'cross_dispersion': det.cross_dispersion,
                 'npix': det.npix,
                 'nsky': det.nsky,
                 'nwave': det.nwave,

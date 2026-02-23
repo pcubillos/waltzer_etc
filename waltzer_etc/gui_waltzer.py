@@ -728,6 +728,11 @@ app_ui = ui.page_fluid(
                             #'ultra_faint': 'Ultra faint',
                         }
                     ),
+                    ui.input_switch(
+                        "tight_beam",
+                        "Tight beam",
+                        value=False,
+                    ),
                     style=card_style,
                     class_="px-2 pt-1 pb-2 m-0 gap-3",
                     fill=False,
@@ -1393,6 +1398,7 @@ def server(input, output, session):
                 'dark': det.dark,
                 'read_noise': det.read_noise,
                 'det_type': det.mode,
+                'cross_dispersion': det.cross_dispersion,
                 'npix': det.npix,
                 'nsky': det.nsky,
                 'nwave': det.nwave,
@@ -2415,12 +2421,14 @@ def server(input, output, session):
         plot_type = input.noise_plot.get()
         binsize = wl_binsize.get()
         wl_scale = input.noise_wl_scale.get()
+        tight_beam = input.tight_beam.get()
 
         if plot_type == 'variance':
             fig = plt.plotly_variances(
                 tso,
                 wl_scale=wl_scale,
                 binsize=binsize,
+                tight_beam=tight_beam,
             )
             return fig
 
@@ -2475,6 +2483,7 @@ def server(input, output, session):
         efficiency = input.efficiency.get() * pc.percent
         n_obs = input.n_obs.get()
         readout = input.readout.get()
+        tight_beam = input.tight_beam.get()
 
         obs_geometry = input.obs_geometry.get()
         transit_dur = input.t_dur.get()
@@ -2498,6 +2507,7 @@ def server(input, output, session):
             tso, depth_model, obs_geometry,
             n_obs, transit_dur, obs_dur, binsize,
             efficiency=efficiency, noiseless=noiseless,
+            tight_beam=tight_beam,
         )
 
         head = 'wl(um)  depth  depth_error  wl_half_width(um)'
