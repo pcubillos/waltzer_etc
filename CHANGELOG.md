@@ -1,5 +1,11 @@
 # CHANGELOG
 
+
+## Version 0.3.5 (2026-02-23)
+
+- In the VIS, updated throughput with an ~8-10% increase across the band.
+- In the NUV, incorporated cross-dispersion beam-size data to optimize extraction, dark and read-noise values are lower, leading to a ~25%-50% improved S/N on the transit dephs toward the blue edge.
+
 ## Version 0.3.4 (2026-02-20)
 
 - Refactored code to perform more accurate transit-depth SNRs, performing calculations at high-resolution, then convolving to WALTzER resolving power, and lastly integrating over WALTzER pixels.
