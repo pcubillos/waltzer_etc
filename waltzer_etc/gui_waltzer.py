@@ -728,6 +728,14 @@ app_ui = ui.page_fluid(
                             #'ultra_faint': 'Ultra faint',
                         }
                     ),
+                    ui.panel_conditional(
+                        "false",
+                        ui.input_switch(
+                            "tight_beam",
+                            "Tight beam",
+                            value=True,
+                        ),
+                    ),
                     style=card_style,
                     class_="px-2 pt-1 pb-2 m-0 gap-3",
                     fill=False,
@@ -1393,6 +1401,7 @@ def server(input, output, session):
                 'dark': det.dark,
                 'read_noise': det.read_noise,
                 'det_type': det.mode,
+                'cross_dispersion': det.cross_dispersion,
                 'npix': det.npix,
                 'nsky': det.nsky,
                 'nwave': det.nwave,
@@ -1478,40 +1487,19 @@ def server(input, output, session):
             message = f'SED model saved to file: {repr(str(savefile))}'
 
         elif tab == 'Noise':
-            tso_key = input.display_tso_run.get()
-            if tso_key is None:
-                return
-            key, tso_label = tso_key.split('_', maxsplit=1)
-            tso = tso_runs[key][tso_label]
-
             plot_type = input.noise_plot.get()
-            bands = tso['meta']['bands']
             if plot_type == 'variance':
                 header = (
-                    'wl(um)  source(e/s)  sky(e/s)  dark(e/s)  '
-                    'read_noise(e/s)  wl_half_width(um)'
+                    'wl(um)  wl_half_width(um) source(e/s)  sky(e/s)  '
+                    'dark(e/s)  read_noise(e/s)'
                 )
-                wl = []
-                for band in bands:
-                    wavel = tso[band]['wl']
-                    if tso[band]['det_type'] == 'photometry':
-                        #throughput = tso[band]['throughput']
-                        #band = PassBand([wavel, throughput], wl=wavel)
-                        #wavel = [band.wl0]
-                        wavel = [0.5*(tso[band]['wl_max']+tso[band]['wl_min'])]
-                    wl.append(wavel)
-                wl = np.hstack(wl)
-                var = np.hstack([tso[band]['variances'] for band in bands])
-                hw = np.hstack([tso[band]['half_widths'] for band in bands])
-                data = np.vstack((wl, var, hw)).T
-
             elif plot_type == 'snr':
                 header = (
                     'wl(um)  flux_in(e)  flux_out(e)  '
                     'var_in(e)  var_out(e)  wl_half_width(um) depth'
                 )
-                data = data_clipboard.get()
 
+            data = data_clipboard.get()
             sed_type, sed_model, mag, sed_label = parse_sed(input, spectra)
             filename = f'{sed_model}_waltzer_variances.dat'
             savefile = Path(f'{current_dir}/{filename}')
@@ -2413,50 +2401,64 @@ def server(input, output, session):
         tso = tso_runs[key][tso_label]
 
         plot_type = input.noise_plot.get()
+        readout = input.readout.get()
         binsize = wl_binsize.get()
         wl_scale = input.noise_wl_scale.get()
 
         if plot_type == 'variance':
+            bands = tso['meta']['bands']
+            var_data = [
+                waltz.calc_variances(tso[band], readout=readout)
+                for band in bands
+            ]
+
+            clip = np.hstack([
+                np.array(v_data)
+                for v_data in var_data
+            ]).T
+            data_clipboard.set(clip)
+
             fig = plt.plotly_variances(
-                tso,
+                var_data,
+                bands,
                 wl_scale=wl_scale,
                 binsize=binsize,
             )
             return fig
 
-        # elif plot_type == 'snr':
-        efficiency = input.efficiency.get() * pc.percent
-        n_obs = input.n_obs.get()
-        readout = input.readout.get()
-        transit_dur = input.t_dur.get()
-        obs_dur = input.obs_dur.get()
-        obs_geometry = input.obs_geometry.get()
+        elif plot_type == 'snr':
+            efficiency = input.efficiency.get() * pc.percent
+            n_obs = input.n_obs.get()
+            transit_dur = input.t_dur.get()
+            obs_dur = input.obs_dur.get()
+            obs_geometry = input.obs_geometry.get()
 
-        # Read model
-        f_star = load_sed(input, spectra, cache_seds)
-        lab, wavel, depth = read_depth_spectrum(input, spectra, wl, f_star)
-        depth_model = wavel, depth
+            # Read model
+            f_star = load_sed(input, spectra, cache_seds)
+            lab, wavel, depth = read_depth_spectrum(input, spectra, wl, f_star)
+            depth_model = wavel, depth
 
-        flux_data = waltz.simulate_spectrum(
-            tso, depth_model, obs_geometry,
-            n_obs, transit_dur, obs_dur, binsize,
-            efficiency=efficiency,
-            ret_variances=True,
-        )
+            flux_data = waltz.simulate_spectrum(
+                tso, depth_model, obs_geometry,
+                n_obs, transit_dur, obs_dur, binsize,
+                readout=readout,
+                efficiency=efficiency,
+                ret_variances=True,
+            )
 
-        clip = np.vstack([
-            np.hstack([d for d in f_data])
-            for f_data in flux_data[1:]
-        ]).T
-        data_clipboard.set(clip)
+            clip = np.vstack([
+                np.hstack([d for d in f_data])
+                for f_data in flux_data[1:]
+            ]).T
+            data_clipboard.set(clip)
 
-        fig = plt.plotly_flux_snr(
-            flux_data,
-            wl_scale=wl_scale,
-            y_scale='log',
-            y_label='time-integrated flux SNR',
-        )
-        return fig
+            fig = plt.plotly_flux_snr(
+                flux_data,
+                wl_scale=wl_scale,
+                y_scale='log',
+                y_label='time-integrated flux SNR',
+            )
+            return fig
 
 
     @render_plotly
@@ -2497,6 +2499,7 @@ def server(input, output, session):
         tso_data = waltz.simulate_spectrum(
             tso, depth_model, obs_geometry,
             n_obs, transit_dur, obs_dur, binsize,
+            readout=readout,
             efficiency=efficiency, noiseless=noiseless,
         )
 
@@ -2534,12 +2537,6 @@ def server(input, output, session):
                 y_label = f'{obs_geometry}-depth SNR'
             )
 
-        #elif plot_type == 'uncertainties':
-        #    fig = plots.plotly_tso_fluxes(
-        #        tso,
-        #        wl_range=wl_range, wl_scale=wl_scale,
-        #        obs_geometry=obs_geometry,
-        #    )
         return fig
 
 

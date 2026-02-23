@@ -144,6 +144,7 @@ class Detector():
         self.read_noise = det.getfloat('read_noise')
         self.exp_time = det.getfloat('exp_time')
         self.aperture = det.getint('aperture')
+        self.cross_dispersion = det.get('cross_dispersion')
 
         # Number of pixels in source and in sky-background
         aperture_radius = self.aperture // 2
@@ -203,6 +204,19 @@ class Detector():
             self.wl = np.array([0.5 * (self.wl_max + self.wl_min)])
             self.half_widths = np.array([0.5 * (self.wl_max - self.wl_min)])
         self.nwave = len(self.wl)
+
+        # Cross-dispersion beam-size (pixels)
+        if self.cross_dispersion is None:
+            self.cross_dispersion = np.tile(self.npix, self.nwave)
+        else:
+            xfile = f'{ROOT}/data/detectors/{self.cross_dispersion}'
+            wl_xd, xd_size = np.loadtxt(xfile, unpack=True)
+            fill_value = np.amin(xd_size), np.amax(xd_size)
+            cross_dispersion = si.interp1d(
+                wl_xd, xd_size, bounds_error=False, fill_value=fill_value,
+            )
+            max_wl = wl_edges[:-1]
+            self.cross_dispersion = np.ceil(cross_dispersion(max_wl))
 
         # TBD: In future this might depend on {RA,dec} of targets
         # Background flux (erg s-1 cm-2 A-1 arcsec-2)
@@ -376,7 +390,7 @@ def calc_variances(
     tso: dictionary
         A WALTzER tso output for a given target.
     readout: String
-        WALTzER readout mode. Yet to be tested.
+        WALTzER readout mode. Yet to be fully tested.
     transit_flux: 1D float array
         An optional second flux spectrum to compute the variances for.
         Typically, an in-transit or an out-of-eclipse spectrum.
@@ -461,12 +475,14 @@ def calc_variances(
     # Integrate over time
     var_source = np.abs(bin_flux)
 
+    # Wavelength-dependent cross dispersion size
+    npix = tso['cross_dispersion'][::rebin]
+
     # Background number of photons
     var_background = npix*(1+npix/nsky) * bin_bkg
 
     # Dark number of photons
     var_dark = rebin * npix*(1+npix/nsky) * tso['dark']
-    var_dark = np.tile(var_dark, nwave)
 
     # Read-out noise
     if readout == 'full_frame' or tso['det_type'] == 'photometry':
@@ -476,7 +492,6 @@ def calc_variances(
         # Only two reads (instead of nsky) for the background:
         var_read = npix*(1+2*npix/nsky**2) * tso['read_noise'] * nreads
 
-    var_read = np.tile(var_read, nwave)
 
     if has_transit:
         var_transit = np.abs(bin_t_flux)
@@ -610,7 +625,7 @@ def simulate_spectrum(
         tso, depth_model=None, obs_type='transit', n_obs=1,
         transit_dur=None, obs_dur=None,
         binsize=None, resolution=None, noiseless=False,
-        efficiency=None, ret_variances=False,
+        readout='full_frame', efficiency=None, ret_variances=False,
     ):
     """
     Simulate a WALTzER TSO observation, that is, a transit or eclipse
@@ -646,6 +661,8 @@ def simulate_spectrum(
     noiseless: Bool
         If False, add scatter to simulated spectrum according to
         the signal's uncertainty.  Set to True to return the ground truth
+    readout: String
+        WALTzER readout mode. Yet to be fully tested, set at your own risk.
     efficiency: Float
         WALTzER duty cycle efficiency. If None, take value from tso.
     ret_variances: Bool
@@ -819,7 +836,9 @@ def simulate_spectrum(
             dt_in = total_time
 
         # Data at WALTzER sampling and resolving power
-        var_data = calc_variances(det, transit_flux=transit_flux)
+        var_data = calc_variances(
+            det, transit_flux=transit_flux, readout=readout,
+        )
         wl = var_data[0]
         half_width = var_data[1]
         flux = var_data[2]
