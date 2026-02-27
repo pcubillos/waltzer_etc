@@ -21,6 +21,7 @@ import pyratbay.constants as pc
 import pyratbay.spectrum as ps
 
 from waltzer_etc.utils import ROOT, inst_convolution
+from waltzer_etc.__main__ import parse_args
 import waltzer_etc as waltz
 import waltzer_etc.sed as sed
 from gui_utils import (
@@ -74,10 +75,14 @@ def searchsorted_closest(array, val):
     return idx
 
 
+# Telescope diameter
+args = parse_args()
+primary_diameter = args.diam
+
 # The three amigos
 bands = ['nuv', 'vis', 'nir']
 detectors = {
-    band: waltz.Detector(band)
+    band: waltz.Detector(band, diameter=primary_diameter)
     for band in bands
 }
 
