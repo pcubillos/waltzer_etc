@@ -73,7 +73,7 @@ def calc_collecting_area(diameter, band):
     raise ValueError(f'Invalid band {repr(band)}')
 
 
-def throughput(file, primary_area=1.0):
+def throughput(file, primary_area):
     """
     Load a detector throughput curve into a scipy interpolator function
 
@@ -91,7 +91,7 @@ def throughput(file, primary_area=1.0):
     throughput: scipy interpolator
     """
     if not os.path.exists(file):
-        raise ValueError(f'Quantum-efficiency file not found: {repr(file)}')
+        raise ValueError(f'Throughput file not found: {repr(file)}')
     det_response = np.loadtxt(file, unpack=True)
     wl = det_response[0]
     wl_min = np.amin(wl)
@@ -227,6 +227,10 @@ class Detector():
             wl_bkg, sky, kind='slinear', bounds_error=False,
         )
 
+        # Will be set when running self.photon_spectrum()
+        self.e_flux = None
+        self.e_background = None
+
 
     def photon_spectrum(self, wl, flux, readout='full_frame'):
         """
@@ -300,6 +304,45 @@ class Detector():
         self.e_flux = photons
         self.e_background = bkg_photons
         return photons, bkg_photons
+
+
+    def make_tso(self, wl=None, flux=None):
+        """
+        Generate a TSO dictionary summarizing the detector and scence data.
+        """
+        # Source flux and variance in e- per second
+        if wl is not None and flux is not None:
+            self.photon_spectrum(wl, flux)
+        if self.e_flux is None:
+            raise ValueError(
+                'Need to call function with SED values to compute '
+                'variances, e.g.: make_tso(wl, flux)'
+            )
+
+        throughput = self.throughput(self.hires_wl)
+        # no integration, no covolution yet
+
+        tso = {
+            'hires_wl': self.hires_wl,
+            'flux': self.e_flux,
+            'background': self.e_background,
+            'throughput': throughput,
+            'dark': self.dark,
+            'read_noise': self.read_noise,
+            'det_type': self.mode,
+            'cross_dispersion': self.cross_dispersion,
+            'npix': self.npix,
+            'nsky': self.nsky,
+            'nwave': self.nwave,
+            'i_start': self.i_start,
+            'over_sampling': self.over_sampling,
+            'resolution': self.resolution,
+            'hires_resolution': self.hires_resolution,
+            'half_widths': self.half_widths,
+            'wl_min': self.wl_min,
+            'wl_max': self.wl_max,
+        }
+        return tso
 
 
     def flux_stats(self, wl, flux):
