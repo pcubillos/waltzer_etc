@@ -184,32 +184,7 @@ def waltzer_sample(
         tso = {}
         for det in detectors:
             band = det.band
-            # Source flux and variance in e- per second:
-            det.photon_spectrum(wl, flux)
-            throughput = det.throughput(det.hires_wl)
-            # no integration, no covolution yet
-
-            tso[band] = {
-                'hires_wl': det.hires_wl,
-                'flux': det.e_flux,
-                'background': det.e_background,
-                'throughput': throughput,
-                'dark': det.dark,
-                'read_noise': det.read_noise,
-                'det_type': det.mode,
-                'cross_dispersion': det.cross_dispersion,
-                'npix': det.npix,
-                'nsky': det.nsky,
-                'nwave': det.nwave,
-                'i_start': det.i_start,
-                'over_sampling': det.over_sampling,
-                'resolution': det.resolution,
-                'hires_resolution': det.hires_resolution,
-                # Remove?
-                'half_widths': det.half_widths,
-                'wl_min': det.wl_min,
-                'wl_max': det.wl_max,
-            }
+            tso[band] = det.make_tso(wl, flux)
 
         tso['meta'] = {
             'bands': bands,

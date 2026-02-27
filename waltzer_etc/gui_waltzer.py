@@ -50,7 +50,6 @@ from gui_popovers import (
     noise_choices,
     tso_choices,
 )
-
 import gui_plotly as plt
 
 bins = np.arange(6000, 0, -1)
@@ -723,8 +722,8 @@ app_ui = ui.page_fluid(
                         label='Readout mode',
                         choices={
                             'full_frame': 'Full frame',
-                            #'bright': 'Bright',
-                            #'faint': 'Faint',
+                            'bright': 'Bright',
+                            'faint': 'Faint',
                             #'ultra_faint': 'Ultra faint',
                         }
                     ),
@@ -1389,30 +1388,7 @@ def server(input, output, session):
         tso = {}
         for band in bands:
             det = detectors[band]
-            det.photon_spectrum(wl, flux)
-            throughput = det.throughput(det.hires_wl)
-
-            # Note: this should mirror waltzer_sample()'s tso dictionary
-            tso[band] = {
-                'hires_wl': det.hires_wl,
-                'flux': det.e_flux,
-                'background': det.e_background,
-                'throughput': throughput,
-                'dark': det.dark,
-                'read_noise': det.read_noise,
-                'det_type': det.mode,
-                'cross_dispersion': det.cross_dispersion,
-                'npix': det.npix,
-                'nsky': det.nsky,
-                'nwave': det.nwave,
-                'i_start': det.i_start,
-                'over_sampling': det.over_sampling,
-                'resolution': det.resolution,
-                'hires_resolution': det.hires_resolution,
-                #'half_widths': det.half_widths,
-                'wl_min': det.wl_min,
-                'wl_max': det.wl_max,
-            }
+            tso[band] = det.make_tso(wl, flux)
 
         tso_label = make_tso_label(input, spectra)
 
