@@ -776,7 +776,6 @@ app_ui = ui.page_fluid(
                             fill=False,
                             fillable=True,
                             class_="p-0 pb-1 m-0",
-
                         ),
                         "Wavelength:",
                         ui.layout_column_wrap(
@@ -796,13 +795,12 @@ app_ui = ui.page_fluid(
                             ),
                             width=1/3,
                             fixed_width=False,
-                            heights_equal='all',
+                            heights_equal='row',
                             gap='5px',
                             fill=False,
                             fillable=True,
-                            class_="p-0 pb-2 m-0",
+                            class_="p-0 m-0",
                         ),
-                        class_="p-0 m-0",
                     ),
 
                     ui.panel_conditional(
@@ -850,44 +848,78 @@ app_ui = ui.page_fluid(
                             gap='5px',
                             fill=False,
                             fillable=True,
-                            class_="p-0 pb-2 m-0",
+                            class_="p-0 m-0",
                         ),
-                        class_="px-0 py-0 m-0",
                     ),
 
                     ui.panel_conditional(
                         "input.tab === 'Noise' || input.tab === 'TSO'",
-                        ui.layout_column_wrap(
-                            "Display:",
-                            ui.div(
-                                ui.panel_conditional(
-                                    "input.tab === 'Noise'",
-                                    ui.input_select(
-                                        id="noise_plot",
-                                        label="",
-                                        choices=noise_choices,
-                                        selected='variance',
-                                    ),
-                                    class_="px-0 py-0 m-0",
+                        #ui.layout_column_wrap(
+                        ui.panel_conditional(
+                            "input.tab === 'Noise'",
+                            ui.layout_column_wrap(
+                                "Display:",
+                                ui.input_select(
+                                    id="noise_plot",
+                                    label="",
+                                    choices=noise_choices,
+                                    selected='variance',
                                 ),
-                                ui.panel_conditional(
-                                    "input.tab === 'TSO'",
+                                width=1/2,
+                                fixed_width=False,
+                                heights_equal=None,
+                                gap='0px',
+                                fill=False,
+                                fillable=True,
+                                class_="p-0 pb-1 m-0",
+                            ),
+                        ),
+                        ui.panel_conditional(
+                            "input.tab === 'TSO'",
+                            ui.layout_column_wrap(
+                                    "Display:",
                                     ui.input_select(
                                         id="tso_plot",
                                         label="",
                                         choices=tso_choices,
                                         selected='tso',
                                     ),
-                                    class_="px-0 py-0 m-0",
+                                width=1/2,
+                                fixed_width=False,
+                                heights_equal=None,
+                                gap='0px',
+                                fill=False,
+                                fillable=True,
+                                class_="p-0 pb-1 m-0",
+                            ),
+                        ),
+                        ui.layout_column_wrap(
+                            ui.markdown('Resolution:'),
+                            ui.input_switch(
+                                "share_resolution",
+                                "Shared",
+                                value=True,
+                            ),
+                            ui.panel_conditional(
+                                "input.share_resolution == false",
+                                ui.tooltip(
+                                    ui.input_numeric(
+                                        id='tso_resolution_nuv',
+                                        label='',
+                                        value=0.0,
+                                        min=0.0, max=6000.0, step=25.0,
+                                    ),
+                                    "NUV true resolution = 6000",
+                                    id='tso_resolution_tooltip_nuv',
+                                    placement='bottom',
                                 ),
                             ),
-                            'Resolution:',
                             ui.tooltip(
                                 ui.input_numeric(
                                     id='tso_resolution',
                                     label='',
                                     value=0.0,
-                                    min=0.0, max=6000.0, step=50.0,
+                                    min=0.0, max=6000.0, step=25.0,
                                 ),
                                 "True resolution = 6000",
                                 id='tso_resolution_tooltip',
@@ -895,10 +927,11 @@ app_ui = ui.page_fluid(
                             ),
                             width=1/2,
                             fixed_width=False,
-                            gap='0px',
+                            heights_equal=None,
+                            gap='5px',
                             fill=False,
                             fillable=True,
-                            class_="p-0 pb-1 m-0",
+                            class_="p-0 m-0",
                         ),
 
                         ui.panel_conditional(
@@ -918,7 +951,6 @@ app_ui = ui.page_fluid(
                                 fillable=True,
                                 class_="p-0 m-0",
                             ),
-                            class_="p-0 m-0",
                         ),
                         ui.panel_conditional(
                             "input.tab === 'TSO'",
@@ -943,7 +975,7 @@ app_ui = ui.page_fluid(
                                 gap='5px',
                                 fill=False,
                                 fillable=True,
-                                class_="p-0 pb-1 m-0",
+                                class_="p-0 m-0",
                             ),
                             "Depth:",
                             ui.layout_column_wrap(
@@ -967,20 +999,17 @@ app_ui = ui.page_fluid(
                                 gap='5px',
                                 fill=False,
                                 fillable=True,
-                                class_="p-0 pb-2 m-0",
+                                class_="p-0 m-0",
                             ),
-                            class_="px-0 py-0 m-0",
                         ),
-
-                        class_="px-0 py-0 m-0",
                     ),
-
-                    class_="px-2 py-1 pb-0 m-0 gap-0",
+                    # Card body
+                    class_="px-2 pt-1 pb-2 m-0 gap-0",
                     style=card_style,
                     fill=False,
                 ),
                 fill=False,
-                class_="p-0 m-0 gap-0",
+                class_="p-0 m-0",
             ),
             # Search nearby Gaia targets for acquisition
             ui.card(
@@ -1163,7 +1192,9 @@ app_ui = ui.page_fluid(
 # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 def server(input, output, session):
     actual_resolution = reactive.Value(6000)
+    actual_resolution_nuv = reactive.Value(6000)
     wl_binsize = reactive.Value(1)
+    wl_binsize_nuv = reactive.Value(1)
     bookmarked_sed = reactive.Value(False)
     bookmarked_depth = reactive.Value(False)
     saturation_label = reactive.Value(None)
@@ -2276,9 +2307,12 @@ def server(input, output, session):
 
 
     @reactive.effect
-    @reactive.event(input.tso_resolution)
+    @reactive.event(input.tso_resolution, input.share_resolution)
     def update_actual_resolution():
         resolution = input.tso_resolution.get()
+        if input.share_resolution.get():
+            ui.update_numeric(id='tso_resolution_nuv', value=resolution)
+
         if resolution == 0.0:
             binsize = 1
             actual_resolution.set(6000.0)
@@ -2291,6 +2325,30 @@ def server(input, output, session):
             wl_binsize.set(binsize)
         tip = f'True resolution = {actual_resolution.get():.1f}'
         ui.update_tooltip('tso_resolution_tooltip', tip)
+
+
+    @reactive.effect
+    @reactive.event(
+        input.tso_resolution, input.tso_resolution_nuv, input.share_resolution,
+    )
+    def update_actual_resolution_nuv():
+        if input.share_resolution.get():
+            resolution = input.tso_resolution.get()
+        else:
+            resolution = input.tso_resolution_nuv.get()
+
+        if resolution == 0.0:
+            binsize = 1
+            actual_resolution_nuv.set(6000.0)
+        else:
+            idx = searchsorted_closest(resolutions, resolution)
+            binsize = bins[idx]
+            actual_resolution_nuv.set(resolutions[idx])
+
+        if binsize != wl_binsize_nuv.get():
+            wl_binsize_nuv.set(binsize)
+        tip = f'NUV true resolution = {actual_resolution_nuv.get():.1f}'
+        ui.update_tooltip('tso_resolution_tooltip_nuv', tip)
 
 
     # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
@@ -2450,9 +2508,18 @@ def server(input, output, session):
             return go.Figure()
         key, tso_label = tso_key.split('_', maxsplit=1)
         tso = tso_runs[key][tso_label]
+        bands = tso['meta']['bands']
 
         plot_type = input.tso_plot.get()
         binsize = wl_binsize.get()
+        binsize_nuv = wl_binsize_nuv.get()
+        band_binsize = []
+        if 'nuv' in bands:
+            band_binsize.append(binsize_nuv)
+        if 'vis' in bands:
+            band_binsize.append(binsize)
+        if 'nir' in bands:
+            band_binsize.append(1)
         wl_scale = input.tso_wl_scale.get()
 
         efficiency = input.efficiency.get() * pc.percent
@@ -2479,7 +2546,8 @@ def server(input, output, session):
         noiseless = plot_type == 'snr'
         tso_data = waltz.simulate_spectrum(
             tso, depth_model, obs_geometry,
-            n_obs, transit_dur, obs_dur, binsize,
+            n_obs, transit_dur, obs_dur,
+            band_binsize,
             readout=readout,
             efficiency=efficiency, noiseless=noiseless,
         )
