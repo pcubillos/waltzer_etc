@@ -326,7 +326,8 @@ app_ui = ui.page_fluid(
     ui.layout_columns(
         ui.span(
             ui.HTML(
-                "<b>WALTzER's</b> Exoplanet time-series observations ETC  "
+                "<b>WALTzER's</b> Exoplanet time-series observations ETC "
+                f"({primary_diameter:.0f} cm)  "
             ),
             ui.tooltip(
                 ui.input_action_link(
