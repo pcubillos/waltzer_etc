@@ -695,12 +695,14 @@ def simulate_spectrum(
     obs_dur: Float
         Total observation duration (h).
         If None, assume an out-of-transit duration of 2*max(t_dur, 1h).
-    binsize: Integer
+    binsize: Integer or iterable
         Binning over spectral axis, in number of pixels.
         Output resolution will be R = 6000.0 / binsize
-    resolution: Float
+        If iterable, there must be one binsize value for each band.
+    resolution: Float or iterable
         Alternative to binsize, set output resolution.
         Note this input take precedence over binsize.
+        If iterable, there must be one resolution value for each band.
     noiseless: Bool
         If False, add scatter to simulated spectrum according to
         the signal's uncertainty.  Set to True to return the ground truth
@@ -849,12 +851,22 @@ def simulate_spectrum(
     if obs_dur is None:
         obs_dur = transit_dur + 2.0*np.amax([1.5*transit_dur, 1.0])
 
+    bands = tso['meta']['bands']
+    if np.isscalar(binsize) or binsize is None:
+        binsize = np.tile(binsize, len(bands))
+    elif len(binsize) != len(bands):
+        raise ValueError('Length of binsize does not match the number of bands')
+
+    if np.isscalar(resolution) or resolution is None:
+        resolution = np.tile(resolution, len(bands))
+    elif len(resolution) != len(bands):
+        raise ValueError('Length of resolution does not match the number of bands')
+
     # Total times integrating in- and out-of-transit (in seconds)
     total_time = (obs_dur * 3600) * efficiency * n_obs
     dt_in = (transit_dur * 3600) * efficiency * n_obs
     dt_out = total_time - dt_in
 
-    bands = tso['meta']['bands']
     walz = dict(
         wl = [],
         depth = [],
@@ -866,7 +878,7 @@ def simulate_spectrum(
         width = [],
     )
 
-    for band in bands:
+    for j,band in enumerate(bands):
         det = tso[band]
         # Fluxes [e- collected] in-transit or out-of-eclipse
         depth = model(det['hires_wl'])
@@ -902,7 +914,7 @@ def simulate_spectrum(
             det['det_type'], wl, half_width,
             flux, variance, dt_in,
             flux_out, var_out, dt_out,
-            binsize, resolution,
+            binsize[j], resolution[j],
         )
 
         if obs_type == 'stare':
