@@ -728,18 +728,10 @@ app_ui = ui.page_fluid(
                         label='Readout mode',
                         choices={
                             'full_frame': 'Full frame',
-                            'bright': 'Bright',
-                            'faint': 'Faint',
+                            #'bright': 'Bright',
+                            #'faint': 'Faint',
                             #'ultra_faint': 'Ultra faint',
                         }
-                    ),
-                    ui.panel_conditional(
-                        "false",
-                        ui.input_switch(
-                            "tight_beam",
-                            "Tight beam",
-                            value=True,
-                        ),
                     ),
                     style=card_style,
                     class_="px-2 pt-1 pb-2 m-0 gap-3",
