@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## Version 0.3.6 (2026-03-02)
+
+- Updated dichroic efficiencies with less conservative (but still responsible) values
+- Enabled customizing the primary mirror diameter when launching the GUI (e.g., for a 45cm mirror, launch the application as: `waltz -tso --diam 45`)
+- In GUI, added option to bin separately the NUV and VIS bands.
 
 ## Version 0.3.5 (2026-02-23)
 
