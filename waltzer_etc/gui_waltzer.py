@@ -311,6 +311,37 @@ app_ui = ui.page_fluid(
         });
         </script>
     """),
+
+    # JavaScript listener KONAMI code
+    ui.tags.script("""
+    document.addEventListener("DOMContentLoaded", function() {
+
+        const sequence = [
+            "ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown",
+            "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight",
+            "b", "a",
+        ];
+        let buffer = [];
+
+        document.addEventListener("keydown", function(event) {
+            buffer.push(event.key);
+            // Keep only last N keys
+            if (buffer.length > sequence.length) {
+                buffer.shift();
+            }
+            // Compare arrays
+            if (JSON.stringify(buffer) === JSON.stringify(sequence)) {
+                // Notify Shiny
+                Shiny.setInputValue(
+                    "konami_sequence_trigger",
+                    Date.now(),
+                    {priority: "event"}
+                );
+                buffer = [];
+            }
+        });
+    });
+    """),
     # Syntax highlighting (python)
     ui.HTML(
         f'<link rel="stylesheet" href="{cdnjs}styles/base16/one-light.min.css">'
@@ -325,10 +356,9 @@ app_ui = ui.page_fluid(
     ),
     ui.layout_columns(
         ui.span(
-            ui.HTML(
-                "<b>WALTzER's</b> Exoplanet time-series observations ETC "
-                f"({primary_diameter:.0f} cm)  "
-            ),
+            ui.HTML("<b>WALTzER</b> Exoplanet time-series observations ETC ("),
+            ui.output_text(id='title', inline=True),
+            ui.HTML(" cm)  "),
             ui.tooltip(
                 ui.input_action_link(
                     id='main_settings',
@@ -355,6 +385,10 @@ app_ui = ui.page_fluid(
                     # a hidden section to hold switches for other conditionals
                     ui.panel_conditional(
                         'false',
+                        ui.input_action_button(
+                            id="konami_sequence_trigger",
+                            label="",
+                        ),
                         ui.input_switch(
                             id="is_candidate",
                             label="candidate",
@@ -1186,6 +1220,8 @@ app_ui = ui.page_fluid(
 def server(input, output, session):
     actual_resolution = reactive.Value(6000)
     actual_resolution_nuv = reactive.Value(6000)
+    walz_detectors = reactive.Value(detectors)
+    mirror_diameter = reactive.Value(primary_diameter)
     wl_binsize = reactive.Value(1)
     wl_binsize_nuv = reactive.Value(1)
     bookmarked_sed = reactive.Value(False)
@@ -1218,6 +1254,54 @@ def server(input, output, session):
         obs_geometry = input.obs_geometry.get()
         value = len(bookmarked_spectra[obs_geometry]) > 0
         ui.update_switch('has_depth_bookmarks', value=value)
+
+
+    @reactive.effect
+    @reactive.event(input.konami_sequence_trigger)
+    def _():
+        ui.modal_show(
+            ui.modal(
+                ui.input_numeric(
+                    id="mirror_size",
+                    label="Set the primary mirror diameter (cm)",
+                    value=35.0,
+                    step=5.0,
+                    min=30.0,
+                    max=50.0,
+                ),
+                ui.input_action_button(
+                    id="set_mirror_size",
+                    label="Update",
+                    class_='btn btn-outline-success btn-sm',
+                ),
+                title="KONAMI code activated! 🎉",
+                easy_close=True,
+                footer=None,
+            )
+        )
+
+
+    @reactive.effect
+    @reactive.event(input.set_mirror_size)
+    def close_modal():
+        primary_diameter = input.mirror_size.get()
+        mirror_diameter.set(primary_diameter)
+        detectors = {
+            band: waltz.Detector(band, diameter=primary_diameter)
+            for band in bands
+        }
+        walz_detectors.set(detectors)
+        ui.update_select(
+            'display_tso_run',
+            choices=make_tso_labels({}),
+        )
+        ui.modal_remove()
+
+
+    @render.text
+    def title():
+        mirror = mirror_diameter.get()
+        return f"{mirror:.0f}"
 
 
     @reactive.effect
@@ -1413,6 +1497,7 @@ def server(input, output, session):
         # Target setup:
         planet_model_type, depth_label, rprs_sq, teq_planet = parse_obs(input)
 
+        detectors = walz_detectors.get()
         # Electrons per second from each source
         tso = {}
         for band in bands:
