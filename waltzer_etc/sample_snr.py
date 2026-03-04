@@ -15,15 +15,15 @@ from . import sed
 
 
 def waltzer_sample(
-         csv_file,
-         output_csv="waltzer_snr.csv",
-         diameter=35.0,
-         efficiency=0.6,
-         t_dur=None,
-         n_obs=10,
-         sed_type='llmodels',
-         obs_mode='transit',
-         hires=48_000,
+        csv_file,
+        output_csv="waltzer_snr.csv",
+        diameter=35.0,
+        efficiency=0.6,
+        t_dur=None,
+        n_obs=10,
+        sed_type='llmodels',
+        obs_mode='transit',
+        hires=48_000,
     ):
     """
     WALTzER Exposure time calculator
