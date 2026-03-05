@@ -563,6 +563,7 @@ def bin_tso_data(
         flux_in, var_in, dt_in,
         flux_out=None, var_out=None, dt_out=0.0,
         binsize=None, resolution=None,
+        short_to_long=True,
     ):
     """
     Compute binned in- and out-of-transit spectra and their variances
@@ -588,6 +589,8 @@ def bin_tso_data(
         Bin down spectrum by number of pixels.
     resolution: Float
         Alternative to binsize, bin down at specified resolution.
+    short_to_long: Bool
+        Binning direction (last bin can have fewer points).
     """
     # Fluxes [e- collected] in and out of transit
     # Variance estimations (e- collected) in and out of transit
@@ -617,7 +620,12 @@ def bin_tso_data(
     # Bin by binsize
     if resolution is None:
         nwave = len(wl)
-        bin_idx = np.arange(0, nwave, binsize)
+        if short_to_long:
+            bin_idx = np.arange(0, nwave, binsize)
+        else:
+            remainder = nwave % binsize
+            bin_idx = np.arange(remainder, nwave, binsize)
+            bin_idx = np.append(0, bin_idx)
         counts = np.diff(np.append(bin_idx, nwave))
 
         bin_widths = np.add.reduceat(half_width, bin_idx)
@@ -910,11 +918,14 @@ def simulate_spectrum(
                 flux, flux_out = flux_out, flux
                 variance, var_out = var_out, variance
 
+        # Bin NUV from long to short, VIS from short to long
+        short_to_long = band != 'nuv'
         bin_data = bin_tso_data(
             det['det_type'], wl, half_width,
             flux, variance, dt_in,
             flux_out, var_out, dt_out,
             binsize[j], resolution[j],
+            short_to_long,
         )
 
         if obs_type == 'stare':
