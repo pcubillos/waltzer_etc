@@ -48,6 +48,16 @@ depth_units_label = {
 }
 
 
+def to_rgba(rgb_value, alpha):
+    """
+    Adds the alpha channel to an RGB Value and returns it as an RGBA Value
+    :param rgb_value: Input RGB Value
+    :param alpha: Alpha Value to add  in range [0,1]
+    :return: RGBA Value
+    """
+    return f"rgba{rgb_value[3:-1]}, {alpha})"
+
+
 def bin_variances(wl, var_list, binsize=1):
     """
     Bin variance list
@@ -530,19 +540,26 @@ def plotly_depth_snr(
     for j,band in enumerate(bands):
         wl = depth_data[1][j]
         snr = depth_data[2][j] / depth_data[3][j]
+        wl_half_width = depth_data[4][j]
         show_legend = j == 0
 
-        if band=="nir":
-            marker = dict(symbol="circle", size=5)
-            error = depth_data[4][j]
+        # X-error bars or line-segment
+        if band=="nir" or len(wl)<=5:
+            marker = dict(symbol="circle", size=5, color=obs_col)
             error_x = dict(
                 type='data', visible=True,
-                array=error,
+                array=wl_half_width, color=obs_col,
             )
+            line_color = to_rgba(obs_col, 0.5)
+        elif len(wl)<=20:
+            marker = dict(symbol="circle", size=5, color=obs_col)
+            error_x = None
+            line_color = to_rgba(obs_col, 0.5)
         else:
             marker = dict()
             error_x = None
-        line = dict(shape='linear')
+            line_color = obs_col
+        line = dict(shape='linear', color=line_color)
 
 
         fig.add_trace(go.Scatter(
@@ -554,7 +571,6 @@ def plotly_depth_snr(
             line=line,
             name=f'{band}',
             showlegend=show_legend,
-            line_color=obs_col,
         ))
 
     fig.update_traces(
