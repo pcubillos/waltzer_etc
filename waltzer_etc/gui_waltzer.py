@@ -2654,6 +2654,16 @@ def server(input, output, session):
                 obs_geometry=obs_geometry,
             )
 
+        elif plot_type == 'errors':
+            fig = plt.plotly_tso_errors(
+                tso,
+                tso_data,
+                wl_range=wl_range,
+                wl_scale=wl_scale,
+                y_scale='log',
+                y_label = f'{obs_geometry} uncertainties (ppm)'
+            )
+
         elif plot_type == 'snr':
             fig = plt.plotly_depth_snr(
                 tso,

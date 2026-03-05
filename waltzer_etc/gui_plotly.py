@@ -4,6 +4,7 @@
 from itertools import groupby
 import numpy as np
 import pyratbay.spectrum as ps
+import pyratbay.constants as pc
 from pyratbay.tools import u
 import plotly.graph_objects as go
 import plotly.express as px
@@ -15,6 +16,7 @@ __all__ = [
     'plotly_variances',
     'plotly_flux_snr',
     'plotly_depth_snr',
+    'plotly_tso_errors',
     'plotly_tso_spectra',
 ]
 
@@ -577,6 +579,99 @@ def plotly_depth_snr(
         hovertemplate=
             'wl = %{x:.4f}<br>'+
             'SNR = %{y:.2f}'
+    )
+    fig.update_yaxes(
+        title_text=y_label,
+        title_standoff=0,
+        type=y_scale,
+    )
+
+    fig.update_xaxes(
+        title_text='wavelength (μm)',
+        title_standoff=0,
+        range=wl_range,
+        type=wl_scale,
+    )
+
+    fig.update_layout(legend=dict(
+        tracegroupgap=0,
+        yanchor="bottom",
+        xanchor="right",
+        y=0.01,
+        x=0.99,
+    ))
+    fig.update_layout(showlegend=True)
+    return fig
+
+
+def plotly_tso_errors(
+        tso,
+        depth_data,
+        wl_range=None,
+        wl_scale='linear',
+        y_scale='linear',
+        y_label='',
+    ):
+    """
+    Make a plotly figure of stellar S/N spectra.
+    """
+    if wl_range is None:
+        wl_range = [None, None]
+    fig = go.Figure(
+        layout={'colorway': COLOR_SEQUENCE},
+    )
+
+    bands = depth_data[0]
+    wl_min = np.amin([tso[band]['wl_min'] for band in bands]) * 0.9
+    wl_max = np.amax([tso[band]['wl_max'] for band in bands]) * 1.1
+    if wl_range[0] is None:
+        wl_range[0] = wl_min
+    if wl_range[1] is None:
+        wl_range[1] = wl_max
+
+    if wl_scale == 'log':
+        wl_range = [np.log10(val) for val in wl_range]
+
+    for j,band in enumerate(bands):
+        wl = depth_data[1][j]
+        uncerts = depth_data[3][j] / pc.ppm
+        wl_half_width = depth_data[4][j]
+        show_legend = j == 0
+
+        # X-error bars or line-segment
+        if band=="nir" or len(wl)<=5:
+            marker = dict(symbol="circle", size=5, color=obs_col)
+            error_x = dict(
+                type='data', visible=True,
+                array=wl_half_width, color=obs_col,
+            )
+            line_color = to_rgba(obs_col, 0.5)
+        elif len(wl)<=20:
+            marker = dict(symbol="circle", size=5, color=obs_col)
+            error_x = None
+            line_color = to_rgba(obs_col, 0.5)
+        else:
+            marker = dict()
+            error_x = None
+            line_color = obs_col
+        line = dict(shape='linear', color=line_color)
+
+
+        fig.add_trace(go.Scatter(
+            x=wl,
+            y=uncerts,
+            error_x=error_x,
+            mode="lines+markers" if marker else "lines",
+            marker=marker,
+            line=line,
+            name=f'{band}',
+            showlegend=show_legend,
+        ))
+
+    fig.update_traces(
+        hovertemplate=
+            'wl = %{x:.4f}<br>'+
+            'uncert = %{y:.2f}'
     )
     fig.update_yaxes(
         title_text=y_label,
