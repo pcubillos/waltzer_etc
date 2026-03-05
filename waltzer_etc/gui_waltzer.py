@@ -43,18 +43,7 @@ from gui_utils import (
     Catalog,
     fetch_gaia_targets,
 )
-# TBD proper import local file
-from gui_popovers import (
-    depth_units,
-    wl_scales,
-    flux_scales,
-    noise_choices,
-    tso_choices,
-)
 import gui_plotly as plt
-
-bins = np.arange(6000, 0, -1)
-resolutions = 6000.0 / bins
 
 
 def searchsorted_closest(array, val):
@@ -75,6 +64,28 @@ def searchsorted_closest(array, val):
     return idx
 
 
+def masked_throughput(masks):
+    if len(masks) == 0:
+        masks = list(band_mask)
+    mask = reduce(operator.or_, (band_mask[k] for k in masks))
+    throughput = {
+        'wl': band_wl,
+        'response': band_response*mask,
+    }
+    return throughput
+
+
+def load_catalog():
+    catalog = Catalog()
+    is_jwst = np.array([target.is_jwst_planet for target in catalog.targets])
+    is_transit = np.array([target.is_transiting for target in catalog.targets])
+    is_confirmed = np.array([target.is_confirmed for target in catalog.targets])
+    return catalog, is_jwst, is_transit, is_confirmed
+
+
+bins = np.arange(6000, 0, -1)
+resolutions = 6000.0 / bins
+
 # Telescope diameter
 args = parse_args()
 primary_diameter = args.diam
@@ -87,25 +98,6 @@ detectors = {
 }
 
 band_wl, band_response, band_mask = get_throughput()
-
-def masked_throughput(masks):
-    if len(masks) == 0:
-        masks = list(band_mask)
-    mask = reduce(operator.or_, (band_mask[k] for k in masks))
-    throughput = {
-        'wl': band_wl,
-        'response': band_response*mask,
-    }
-    return throughput
-
-
-
-def load_catalog():
-    catalog = Catalog()
-    is_jwst = np.array([target.is_jwst_planet for target in catalog.targets])
-    is_transit = np.array([target.is_transiting for target in catalog.targets])
-    is_confirmed = np.array([target.is_confirmed for target in catalog.targets])
-    return catalog, is_jwst, is_transit, is_confirmed
 
 
 # Catalog of known exoplanets (and candidate planets)
@@ -182,6 +174,37 @@ band_name = 'johnson,v'
 depth_choices = {
     'transit': ['Flat', 'Input'],
     'eclipse': ['Blackbody', 'Input']
+}
+
+depth_units = [
+    "none",
+    "percent",
+    "ppm",
+]
+
+wl_scales = {
+    'Wavelength scale': {
+        'linear': 'linear',
+        'log': 'log',
+    },
+}
+
+flux_scales = {
+    'Flux scale': {
+        'linear': 'linear',
+        'log': 'log',
+    },
+}
+
+noise_choices = {
+    'variance': 'Variances',
+    'snr': 'Flux S/N',
+}
+
+tso_choices = {
+    'tso': 'TSO',
+    'snr': 'Depth S/N',
+    'errors': 'Depth uncertainties',
 }
 
 tso_runs = {
@@ -1004,6 +1027,9 @@ app_ui = ui.page_fluid(
                                 fillable=True,
                                 class_="p-0 m-0",
                             ),
+                        ),
+                        ui.panel_conditional(
+                            "input.tab === 'TSO' && input.tso_plot === 'tso'",
                             "Depth:",
                             ui.layout_column_wrap(
                                 ui.input_numeric(
