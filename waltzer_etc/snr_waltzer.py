@@ -618,7 +618,7 @@ def bin_tso_data(
         return wl, flux_in, flux_out, var_in, var_out, half_width
 
     # Bin by binsize
-    if resolution is None:
+    elif resolution is None:
         nwave = len(wl)
         if short_to_long:
             bin_idx = np.arange(0, nwave, binsize)
@@ -640,13 +640,16 @@ def bin_tso_data(
     else:
         wl_min = np.amin(wl)
         wl_max = np.amax(wl)
-        if resolution is not None:
+        if short_to_long:
             bin_edges = ps.constant_resolution_spectrum(
                 wl_min, wl_max, resolution,
             )
             bin_edges = np.append(bin_edges, wl_max)
         else:
-            bin_edges = 0.5 * (wl[1:] + wl[:-1])
+            bin_edges = 1/ps.constant_resolution_spectrum(
+                1/wl_max, 1/wl_min, resolution,
+            )
+            bin_edges = np.append(wl_min, bin_edges[::-1])
 
         bin_wl = 0.5 * (bin_edges[1:] + bin_edges[:-1])
         bin_widths = bin_wl - bin_edges[:-1]
