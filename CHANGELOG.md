@@ -6,7 +6,7 @@
 - Updated dichroic efficiencies for NIR photometer (gain of ~20%)
 - Fixed bug with missing PHOENIX SED models not being found
 - Enabled custom binning per band for simulate_spectrum()
-- In GUI, implemented 'Depth Uncertainty" TSO plot to show transit/eclipse depth uncertainties
+- In GUI, implemented 'Depth Uncertainty' TSO plot to show transit/eclipse depth uncertainties
 - Changed NUV binning direction to go from long-to-short wavelengths, this prioritizes the red-end of the spectrum where there are more photons
 
 
