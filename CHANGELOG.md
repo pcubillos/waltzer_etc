@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## Version 0.3.8 (2026-03-06)
+
+- Updated dichroic1 transmission efficiency with data from manufactor. There is an increase from 90% to 95%.
+
 ## Version 0.3.7 (2026-03-06)
 
 - Updated to telescope configuration with two NUV fold.  This brings down the efficiency for bright targets by ~4%, but increases the efficiency of faint targets by ~20-80%
