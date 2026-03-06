@@ -15,15 +15,15 @@ from . import sed
 
 
 def waltzer_sample(
-         csv_file,
-         output_csv="waltzer_snr.csv",
-         diameter=35.0,
-         efficiency=0.6,
-         t_dur=None,
-         n_obs=10,
-         sed_type='llmodels',
-         obs_mode='transit',
-         hires=48_000,
+        csv_file,
+        output_csv="waltzer_snr.csv",
+        diameter=35.0,
+        efficiency=0.6,
+        t_dur=None,
+        n_obs=10,
+        sed_type='llmodels',
+        obs_mode='transit',
+        hires=48_000,
     ):
     """
     WALTzER Exposure time calculator
@@ -157,8 +157,8 @@ def waltzer_sample(
                 teff, logg, sed_type,
             )
 
-        if sed_file in cache_seds:
-            sed_flux = cache_seds[sed_file]
+        if sed_label in cache_seds:
+            sed_flux = cache_seds[sed_label]
         else:
             # Load SED flux
             if has_sed[i]:
@@ -167,7 +167,7 @@ def waltzer_sample(
                 sed_wl, flux = sed.load_sed(teff_match, logg_match, sed_type)
             # Interpolate to regular grid
             sed_flux = np.interp(wl, sed_wl, flux)
-            cache_seds[sed_file] = sed_flux
+            cache_seds[sed_label] = sed_flux
 
         # Normalize according to Vmag
         flux = sed.normalize_vega(wl, sed_flux, v_mags[i])

@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## Version 0.3.7 (2026-03-06)
+
+- Updated to telescope configuration with two NUV fold.  This brings down the efficiency for bright targets by ~4%, but increases the efficiency of faint targets by ~20-80%
+- Updated dichroic efficiencies for NIR photometer (gain of ~20%)
+- Fixed bug with missing PHOENIX SED models not being found
+- Enabled custom binning per band for simulate_spectrum()
+- In GUI, implemented 'Depth Uncertainty' TSO plot to show transit/eclipse depth uncertainties
+- Changed NUV binning direction to go from long-to-short wavelengths, this prioritizes the red-end of the spectrum where there are more photons
+
+
 ## Version 0.3.6 (2026-03-02)
 
 - Updated dichroic efficiencies with less conservative (but still responsible) values

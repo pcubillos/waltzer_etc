@@ -151,12 +151,12 @@ tdepth_file = 'transit_saturn_1600K_clear.dat'
 wl, depth = np.loadtxt(tdepth_file, unpack=True)
 depth_model = wl, depth
 
-# Simulate WALTzER observation
+# Simulate WALTzER observation (note custom output resolution per band)
 sim = w.simulate_spectrum(
     tso,
     depth_model,
-    n_obs=10,
-    resolution=300.0,
+    n_obs=5,
+    resolution=[10.0, 300.0, 1.0],
     noiseless=False,
 )
 
@@ -181,7 +181,7 @@ plt.xscale('log')
 ax.set_xticks([0.25, 0.3, 0.4, 0.6, 0.8, 1.0, 1.6])
 ax.set_xticklabels([])
 ax.tick_params(which='both', direction='in')
-ax.set_xlim(0.24, 1.7)
+ax.set_xlim(0.23, 1.7)
 ax.set_ylim(0.99, 1.12)
 ax.set_ylabel('Transit depth (%)')
 ax.legend(loc='upper right')
@@ -198,13 +198,13 @@ ax.set_yscale('log')
 ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
 ax.xaxis.set_major_formatter(matplotlib.ticker.ScalarFormatter())
 ax.set_xticks([0.25, 0.3, 0.4, 0.6, 0.8, 1.0, 1.6])
-ax.set_xlim(0.24, 1.7)
+ax.set_xlim(0.23, 1.7)
 ax.tick_params(which='both', direction='in')
 ax.set_xlabel('Wavelength (um)')
 ax.set_ylabel('Depth error (ppm)')
 ```
 
-<img alt="WALTzER transit" src="https://github.com/pcubillos/waltzer_etc/blob/main/waltzer_etc/data/waltzer_demo_transmission.png" width="600">
+<img alt="WALTzER transit" src="https://github.com/pcubillos/waltzer_etc/blob/main/waltzer_etc/data/figures/waltzer_demo_transmission.png" width="600">
 
 ### Simulate stare-mode spectra
 
@@ -263,7 +263,7 @@ bx.set_ylabel('Source S/N')
 bx.set_xlabel('Wavelength (um)')
 ```
 
-<img alt="WALTzER stare" src="https://github.com/pcubillos/waltzer_etc/blob/main/waltzer_etc/data/waltzer_demo_stare.png" width="600">
+<img alt="WALTzER stare" src="https://github.com/pcubillos/waltzer_etc/blob/main/waltzer_etc/data/figures/waltzer_demo_stare.png" width="600">
 
 ## WALTzER TSO GUI
 
