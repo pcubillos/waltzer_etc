@@ -28,23 +28,6 @@ base_dir = f'{ROOT}data/models/'
 sed_base_dir = f'{ROOT}data/'
 
 
-def _get_sed_list(sed_type):
-    """
-    sed_type = 'llmodels'
-    """
-    if sed_type == 'llmodels':
-        sed_type = 'models'
-    sed_file = f'{sed_base_dir}{sed_type}/sed_files.txt'
-
-    data = np.loadtxt(sed_file, dtype=str, delimiter=',', unpack=True)
-    labels = data[0]
-    teff = np.array(data[1], dtype=float)
-    logg = np.array(data[2], dtype=float)
-    files = data[3]
-    isort = np.flip(np.argsort(teff))
-    return files[isort], labels[isort], teff[isort], logg[isort]
-
-
 def get_sed_types():
     """
     Get the list of SED models.
@@ -65,6 +48,51 @@ def get_sed_types():
         #'k93models',
         'bt_settl',
     ]
+
+
+def _get_sed_list(sed_type):
+    """
+    Find out which SED models are available.
+    If the SED files are not there, there will be no model.
+    """
+    if sed_type == 'llmodels':
+        sed_type = 'models'
+    sed_folder = f'{sed_base_dir}{sed_type}'
+    sed_file = f'{sed_base_dir}{sed_type}/sed_files.txt'
+
+    labels = []
+    teff = []
+    logg = []
+    files = []
+    for line in open(sed_file, 'r'):
+        info = [entry.strip() for entry in line.split(',')]
+        # Keep only if the needed files exist:
+        sed_files = info[3:]
+        files_exist = np.all([
+            os.path.exists(os.path.join(sed_folder, file))
+            for file in sed_files
+        ])
+        if files_exist:
+            labels.append(info[0])
+            teff.append(info[1])
+            logg.append(info[2])
+            files.append(sed_files)
+
+    labels = np.array(labels)
+    teff = np.array(teff, dtype=float)
+    logg = np.array(logg, dtype=float)
+    isort = np.flip(np.argsort(teff))
+    files = [files[i] for i in isort]
+    return files, labels[isort], teff[isort], logg[isort]
+
+
+# Run _get_sed_list() at load time to get this data once
+# Then get_sed_list() will just get the info from this dictionary
+SED_DATA = {
+    sed_type: _get_sed_list(sed_type)
+    for sed_type in get_sed_types()
+}
+
 
 def load_vega():
     vega_file = f"{ROOT}/data/alpha_lyr_stis_010.fits"
@@ -129,19 +157,12 @@ def get_sed_list(sed_type='llmodels'):
     >>> files, labels, teff, logg = sed.get_sed_list('llmodels')
     >>> files, labels, teff, logg = sed.get_sed_list('bt_settl')
     >>> files, labels, teff, logg = sed.get_sed_list('phoenix')
-
-    print(labels)
     """
-    files, labels, teff, logg = _get_sed_list(sed_type)
+    if sed_type not in SED_DATA:
+        msg = f'Invalid sed_type {repr(sed_type)}, select from {get_sed_types()}'
+        raise ValueError(msg)
 
-    if sed_type == 'llmodels':
-        sed_type = 'models'
-    sed_folder = f'{sed_base_dir}{sed_type}'
-
-    sed_files = np.array([os.path.join(sed_folder, file) for file in files])
-    mask = [os.path.exists(file) for file in sed_files]
-
-    return sed_files[mask], labels[mask], teff[mask], logg[mask]
+    return SED_DATA[sed_type]
 
 
 def find_closest_sed(teff, logg, sed_type):
@@ -152,7 +173,7 @@ def find_closest_sed(teff, logg, sed_type):
     --------
     >>> import waltzer_etc.sed as sed
     >>> teff = 8000.0
-    >>> file, temp = sed.find_closest_sed(8000.0, 4.5, 'llmodels')
+    >>> files, label, temp, logg = sed.find_closest_sed(8000.0, 4.5, 'llmodels')
     """
     files, labels, grid_teff, grid_logg = get_sed_list(sed_type)
 
@@ -198,7 +219,7 @@ def load_sed(teff=None, logg=4.5, sed_type='llmodels'):
     if sed_type == 'bt_settl':
         return load_sed_phoenix(file=file)
     if sed_type == 'phoenix':
-        return load_sed_phoenix(file=file, logg=logg_match)
+        return load_sed_phoenix(file=file, teff=teff_match, logg=logg_match)
 
 
 def load_sed_llmodels(teff=None, file=None):
@@ -231,7 +252,8 @@ def load_sed_llmodels(teff=None, file=None):
         file, label, teff_match, logg = find_closest_sed(teff, logg, sed_type='llmodels')
 
     # Load SED flux
-    spectrum = np.loadtxt(file, unpack=True)
+    sed_file = f'{sed_base_dir}models/{file[0]}'
+    spectrum = np.loadtxt(sed_file, unpack=True)
     wl, flux = spectrum[0:2]
 
     # Convert wavelength from angstrom to microns
@@ -244,16 +266,27 @@ def load_sed_llmodels(teff=None, file=None):
     return wl, flux
 
 
-def load_sed_phoenix(file, logg=None):
+def load_sed_phoenix(file, teff=None, logg=None):
     """
-    Doc me.
+    Load a PHOENIX or BT-Settl SED model.
+    Not intended for the user, use load_sed() instead.
     """
+    # BT-Settl models
     if logg is None:
-        sp = SourceSpectrum.from_file(file)
+        sed_file = f'{sed_base_dir}bt_settl/{file[0]}'
+        sp = SourceSpectrum.from_file(sed_file)
+    # PHOENIX models
     else:
         flux_col = f'g{int(10*logg):02d}'
-        sp = SourceSpectrum.from_file(file, flux_col=flux_col)
-
+        sed_file = f'{sed_base_dir}phoenix/{file[0]}'
+        sp = SourceSpectrum.from_file(sed_file, flux_col=flux_col)
+        if len(file) > 1:
+            # Linear interpolation in temperature
+            sed_file = f'{sed_base_dir}phoenix/{file[1]}'
+            sp1 = SourceSpectrum.from_file(sed_file, flux_col=flux_col)
+            teff0 = float(file[0][file[0].index('_')+1:file[0].index('.')])
+            teff1 = float(file[1][file[1].index('_')+1:file[1].index('.')])
+            sp = (sp*(teff1-teff) + sp1*(teff-teff0)) / (teff1-teff0)
     wl = sp.waveset.to('micron').value
     flux = sp(sp.waveset, flux_unit=u.mJy).value
 
