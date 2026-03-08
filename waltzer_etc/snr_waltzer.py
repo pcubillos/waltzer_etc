@@ -766,8 +766,6 @@ def simulate_spectrum(
             Binned out_of-transit variances.
         bin_widths: list of 1D float arrays
             Bin-widths for each data point.
-        bin_depth: list of 1D float arrays
-            Binned transit/eclipse depths for each band.
 
     Examples
     --------
