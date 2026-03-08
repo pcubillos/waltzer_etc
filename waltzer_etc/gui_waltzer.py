@@ -37,6 +37,7 @@ from gui_utils import (
     read_spectrum_file,
     pretty_print_target,
     as_str,
+    data_to_text,
     esasky_js_circle,
     esasky_js_catalog,
     custom_card,
@@ -403,6 +404,7 @@ app_ui = ui.page_fluid(
         # The target
         custom_card(
             ui.card_header("Target", class_="bg-primary"),
+            # Point source target
             ui.card(
                 ui.card_body(
                     # a hidden section to hold switches for other conditionals
@@ -570,11 +572,10 @@ app_ui = ui.page_fluid(
                         label="",
                         choices=sed_dict[list(sed_choices)[0]],
                     ),
-                    fill=False,
+                    class_="px-2 py-1 pb-2 m-0 gap-2",
                     style=card_style,
-                    class_="px-2 pt-2 pb-0 m-0 gap-2",
+                    fill=False,
                 ),
-                class_="p-0 pb-1 m-0",
                 fill=False,
             ),
             # The planet
@@ -734,14 +735,14 @@ app_ui = ui.page_fluid(
                             **layout_kwargs,
                         ),
                     ),
-                    fill=False,
+                    class_="px-2 py-1 pb-0 m-0 gap-2",
                     style=card_style,
-                    class_="px-2 pt-2 pb-0 m-0 gap-2",
+                    fill=False,
                 ),
                 class_="p-0 m-0",
                 fill=False,
             ),
-            body_args=dict(class_="p-2 m-0"),
+            body_args=dict(class_="p-2 m-0 gap-3"),
         ),
 
         # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
@@ -1223,7 +1224,7 @@ app_ui = ui.page_fluid(
                     "Results",
                     ui.span(
                         ui.output_ui(id="results"),
-                        style="font-family: monospace; font-size:medium;",
+                        style="font-family: monospace; font-size:medium; max-height:30em;",
                     ),
                 ),
                 ui.nav_panel(
@@ -1604,22 +1605,13 @@ def server(input, output, session):
 
         elif tab == 'Noise':
             plot_type = input.noise_plot.get()
-            if plot_type == 'variance':
-                header = (
-                    'wl(um)  wl_half_width(um) source(e/s)  sky(e/s)  '
-                    'dark(e/s)  read_noise(e/s)'
-                )
-            elif plot_type == 'snr':
-                header = (
-                    'wl(um)  flux_in(e)  flux_out(e)  '
-                    'var_in(e)  var_out(e)  wl_half_width(um) depth'
-                )
-
             data = data_clipboard.get()
+
             sed_type, sed_model, mag, sed_label = parse_sed(input, spectra)
             filename = f'{sed_model}_waltzer_variances.dat'
             savefile = Path(f'{current_dir}/{filename}')
-            np.savetxt(savefile, data, header=header)
+            with open(savefile, 'w') as f:
+                f.write(data)
             message = f"Variances saved to file: '{savefile}'"
 
         else:
@@ -2555,11 +2547,8 @@ def server(input, output, session):
                 for band in bands
             ]
 
-            clip = np.hstack([
-                np.array(v_data)
-                for v_data in var_data
-            ]).T
-            data_clipboard.set(clip)
+            formatted_data = data_to_text(var_data, 'source_variances')
+            data_clipboard.set(formatted_data)
 
             fig = plt.plotly_variances(
                 var_data,
@@ -2589,11 +2578,8 @@ def server(input, output, session):
                 ret_variances=True,
             )
 
-            clip = np.vstack([
-                np.hstack([d for d in f_data])
-                for f_data in flux_data[1:]
-            ]).T
-            data_clipboard.set(clip)
+            formatted_data = data_to_text(flux_data[1:], 'source_snr')
+            data_clipboard.set(formatted_data)
 
             fig = plt.plotly_flux_snr(
                 flux_data,
@@ -2707,56 +2693,15 @@ def server(input, output, session):
     # Results
     @render.ui
     def results():
-        # Only read for reactivity reasons:
-        saturation_label.get()
-
-        #config = parse_instrument(input)
-        #config = None
-        #if config is None:
-        #    return ui.HTML('<pre> </pre>')
-
         name = input.target.get()
-        #target = catalog.get_target(name, is_transit=None, is_confirmed=None)
-        #cached_target = (
-        #    target is not None and
-        #    target.host in cache_acquisition and
-        #    cache_acquisition[target.host]['selected'] is not None
-        #)
+        data = data_clipboard.get()
 
-        #depth_label = parse_obs(input)[1]
-        #transit_dur = _safe_num(input.t_dur.get(), default=2.0, cast=float)
+        text = name + '<br>'
+        if data is None:
+            return ui.HTML(f'<pre>{text}</pre>')
 
-        #if parse_sed(input, spectra)[-1] is None:
-        #    return ui.HTML('<pre> </pre>')
-
-        #obs_geometry = input.obs_geometry.get()
-        #run_type = obs_geometry.capitalize()
-
-        #report_text = jwst._print_pandeia_exposure()
-        #target_name = f': {target.planet}' if target is not None else ''
-        #report_text = f'<b>target{target_name}</b><br>{report_text}'
-
-        #sed_type, sed_model, norm_mag, sed_label = parse_sed(
-        #    input, spectra,
-        #)
-        #pixel_rate, full_well = get_saturation_values(
-        #    filter, sed_label, norm_mag, cache_saturation,
-        #)
-        #if pixel_rate is not None:
-        #    saturation_text = jwst._print_pandeia_saturation(
-        #        pixel_rate, full_well,
-        #        format='html',
-        #    )
-        #    report_text += f'<br>{saturation_text}'
-
-        #tso_label = make_obs_label()
-        #if tso_label in tso_runs[run_type]:
-        #    tso_run = tso_runs[run_type][tso_label]
-        #    if transit_dur == tso_run['transit_dur']:
-        #        report_text += f'<br><br>{tso_run["stats"]}'
-        report_text = name
-        return ui.HTML(f'<pre>{report_text}</pre>')
-
+        text += data.replace('\n', '<br>')
+        return ui.HTML(f'<pre>{text}</pre>')
 
 
     @reactive.effect
