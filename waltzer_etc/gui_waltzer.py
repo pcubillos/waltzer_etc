@@ -292,6 +292,7 @@ layout_kwargs = dict(
     class_="pb-2 pt-0 m-0",
 )
 
+
 welcome = """\
 To update:
 
@@ -880,31 +881,52 @@ app_ui = ui.page_fluid(
                         },
                         selected=['nuv', 'vis', 'nir'],
                     ),
-                    ui.input_numeric(
-                        id="efficiency",
-                        label="Efficiency (%)",
-                        value=60.0,
-                        min=0.0,
-                        max=100.0,
-                        step=0.5,
-                    ),
-                    ui.input_numeric(
-                        id="n_obs",
-                        label="Number of observations",
-                        value=3,
-                        min=1,
-                        max=50,
-                        step=1,
-                    ),
-                    ui.input_select(
-                        id='readout',
-                        label='Readout mode',
-                        choices={
-                            'full_frame': 'Full frame',
-                            #'bright': 'Bright',
-                            #'faint': 'Faint',
-                            #'ultra_faint': 'Ultra faint',
-                        }
+                    ui.layout_column_wrap(
+                        "Efficiency (%):",
+                        ui.input_numeric(
+                            id="efficiency",
+                            label="",
+                            value=60.0,
+                            min=0.0,
+                            max=100.0,
+                            step=1.0,
+                        ),
+                        "Num. observs:",
+                        ui.input_numeric(
+                            id="n_obs",
+                            label="",
+                            value=3,
+                            min=1,
+                            max=50,
+                            step=1,
+                        ),
+                        'Readout mode:',
+                        ui.input_select(
+                            id='readout',
+                            label='',
+                            choices={
+                                'full_frame': 'Full frame',
+                                #'bright': 'Bright',
+                                #'faint': 'Faint',
+                                #'ultra_faint': 'Ultra faint',
+                            }
+                        ),
+                        ui.tooltip(
+                            'Apertures:',
+                            'NUV and VIS',
+                            id='aper_tooltip',
+                            placement='bottom',
+                        ),
+                        ui.input_select(
+                            id='aperture',
+                            label='',
+                            choices={
+                                '10_15': '10" & 15"',
+                                '20_30': '20" & 30"',
+                                '60_60': '60" & 60"',
+                            }
+                        ),
+                        **layout_kwargs,
                     ),
                     style=card_style,
                     class_="px-2 pt-1 pb-2 m-0 gap-3",
