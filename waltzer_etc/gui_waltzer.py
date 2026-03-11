@@ -404,10 +404,19 @@ app_ui = ui.page_fluid(
         # The target
         custom_card(
             ui.card_header("Target", class_="bg-primary"),
-            # Point source target
             ui.card(
                 ui.card_body(
-                    # a hidden section to hold switches for other conditionals
+                    ui.markdown('**Source type**'),
+                    ui.input_select(
+                        id="source_type",
+                        label='',
+                        choices={
+                            'point': 'Point Source',
+                            #'extended': 'Extended Source',
+                        },
+                        selected='point',
+                    ),
+                    # Hidden section to hold switches for conditionals
                     ui.panel_conditional(
                         'false',
                         ui.input_action_button(
@@ -430,153 +439,164 @@ app_ui = ui.page_fluid(
                             value=False,
                         ),
                     ),
-                    ui.popover(
-                        ui.span(
-                            fa.icon_svg("gear"),
-                            style="position:absolute; top: 5px; right: 7px;",
-                        ),
-                        ui.input_checkbox_group(
-                            id="target_filter",
-                            label='',
-                            choices={
-                                "transit": "transiting",
-                                "jwst": "JWST targets",
-                                "tess": "TESS candidates",
-                                "non_transit": "non-transiting",
-                            },
-                            selected=['jwst', 'transit'],
-                        ),
-                        title='Filter targets',
-                        placement="right",
-                        id="targets_popover",
-                    ),
-                    ui.span(
-                        ui.HTML('<b>Target</b> '),
-                        ui.tooltip(
-                            ui.input_action_link(
-                                id='show_info',
-                                label='',
-                                icon=fa.icon_svg("circle-info", fill='cornflowerblue'),
-                            ),
-                            'System info',
-                            id='target_info_tooltip',
-                            placement='top',
-                        ),
-                        #url has to be set with javascript, output_ui does not render nicely, ui.input_action_link() does not open in server side.
-                        ui.tooltip(
-                            ui.tags.a(
-                                fa.icon_svg("circle-info", fill='black'),
-                                id='nasa_link',
-                                href=f'{nasa_url}',
-                                target="_blank",
-                            ),
-                            "Open target's NASA Exoplanet Archive",
-                            id='nasa_tooltip',
-                            placement='top',
-                        ),
-                        ui.tooltip(
-                            ui.input_action_link(
-                                id='show_observations',
-                                label='',
-                                icon=fa.icon_svg("circle-info", fill='gray'),
-                            ),
-                            'not a JWST target (yet)',
-                            id='jwst_tooltip',
-                            placement='top',
-                        ),
-                        ui.panel_conditional(
-                            "input.is_candidate",
-                            ui.tooltip(
-                                fa.icon_svg("triangle-exclamation", fill='darkorange'),
-                                ui.markdown("This is a *candidate* planet"),
-                                placement='top',
-                            ),
-                        ),
-                    ),
-                    ui.input_selectize(
-                        id='target',
-                        label='',
-                        choices=[target.planet for target in catalog.targets],
-                        selected='HD 209458 b',
-                        multiple=False,
-                    ),
-                    # SED properties
-                    ui.layout_column_wrap(
-                        # Row 1
-                        ui.HTML("<p>T<sub>eff</sub> (K):</p>"),
-                        ui.input_numeric("t_eff", "", value='1400.0'),
-                        # Row 2
-                        ui.p("log(g):"),
-                        ui.input_numeric("log_g", "", value='4.5'),
-                        # Row 3
-                        ui.p("V magnitude:"),
-                        ui.input_numeric(
-                            id="magnitude",
-                            label="",
-                            value='10.0',
-                        ),
-                        width=1/2,
-                        fixed_width=False,
-                        heights_equal='all',
-                        gap='7px',
-                        fill=False,
-                        fillable=True,
-                    ),
-                    ui.span(
-                        ui.HTML('<b>Stellar SED</b> '),
-                        # upload (hidden for now)
-                        ui.tooltip(
-                            ui.input_action_link(
-                                id='upload_sed',
-                                label='',
-                                icon=fa.icon_svg("file-arrow-up", fill='black'),
-                            ),
-                            'Upload SED',
-                            id='sed_up_tooltip',
-                            placement='top',
-                        ),
-                        # bookmarks
-                        ui.tooltip(
-                            ui.input_action_link(
-                                id='bookmark_sed',
-                                label='',
-                                icon=fa.icon_svg("star", style='regular', fill='black'),
-                            ),
-                            'Bookmark SED',
-                            id='sed_book_tooltip',
-                            placement='top',
-                        ),
-                        # clear
-                        ui.panel_conditional(
-                            "input.has_sed_bookmarks",
-                            ui.tooltip(
-                                ui.input_action_link(
-                                    id='clear_sed_bookmarks',
-                                    label='',
-                                    icon=fa.icon_svg("circle-xmark", style='regular', fill='black'),
-                                ),
-                                'Clear all SED bookmarks',
-                                id='sed_clear_tooltip',
-                                placement='top',
-                            ),
-                        ),
-                    ),
-                    ui.input_select(
-                        id="sed_type",
-                        label='',
-                        choices=sed_choices,
-                        selected=list(sed_choices)[0],
-                    ),
-                    ui.input_select(
-                        id="sed",
-                        label="",
-                        choices=sed_dict[list(sed_choices)[0]],
-                    ),
                     class_="px-2 py-1 pb-2 m-0 gap-2",
                     style=card_style,
                     fill=False,
                 ),
                 fill=False,
+            ),
+            # Point source target
+            ui.panel_conditional(
+                "input.source_type === 'point'",
+                ui.card(
+                    ui.card_body(
+                        ui.popover(
+                            ui.span(
+                                fa.icon_svg("gear"),
+                                style="position:absolute; top: 5px; right: 7px;",
+                            ),
+                            ui.input_checkbox_group(
+                                id="target_filter",
+                                label='',
+                                choices={
+                                    "transit": "transiting",
+                                    "jwst": "JWST targets",
+                                    "tess": "TESS candidates",
+                                    "non_transit": "non-transiting",
+                                },
+                                selected=['jwst', 'transit'],
+                            ),
+                            title='Filter targets',
+                            placement="right",
+                            id="targets_popover",
+                        ),
+                        ui.span(
+                            ui.HTML('<b>Target</b> '),
+                            ui.tooltip(
+                                ui.input_action_link(
+                                    id='show_info',
+                                    label='',
+                                    icon=fa.icon_svg("circle-info", fill='cornflowerblue'),
+                                ),
+                                'System info',
+                                id='target_info_tooltip',
+                                placement='top',
+                            ),
+                            #url has to be set with javascript, output_ui does not render nicely, ui.input_action_link() does not open in server side.
+                            ui.tooltip(
+                                ui.tags.a(
+                                    fa.icon_svg("circle-info", fill='black'),
+                                    id='nasa_link',
+                                    href=f'{nasa_url}',
+                                    target="_blank",
+                                ),
+                                "Open target's NASA Exoplanet Archive",
+                                id='nasa_tooltip',
+                                placement='top',
+                            ),
+                            ui.tooltip(
+                                ui.input_action_link(
+                                    id='show_observations',
+                                    label='',
+                                    icon=fa.icon_svg("circle-info", fill='gray'),
+                                ),
+                                'not a JWST target (yet)',
+                                id='jwst_tooltip',
+                                placement='top',
+                            ),
+                            ui.panel_conditional(
+                                "input.is_candidate",
+                                ui.tooltip(
+                                    fa.icon_svg("triangle-exclamation", fill='darkorange'),
+                                    ui.markdown("This is a *candidate* planet"),
+                                    placement='top',
+                                ),
+                            ),
+                        ),
+                        ui.input_selectize(
+                            id='target',
+                            label='',
+                            choices=[target.planet for target in catalog.targets],
+                            selected='HD 209458 b',
+                            multiple=False,
+                        ),
+                        # SED properties
+                        ui.layout_column_wrap(
+                            # Row 1
+                            ui.HTML("<p>T<sub>eff</sub> (K):</p>"),
+                            ui.input_numeric("t_eff", "", value='1400.0'),
+                            # Row 2
+                            ui.p("log(g):"),
+                            ui.input_numeric("log_g", "", value='4.5'),
+                            # Row 3
+                            ui.p("V magnitude:"),
+                            ui.input_numeric(
+                                id="magnitude",
+                                label="",
+                                value='10.0',
+                            ),
+                            width=1/2,
+                            fixed_width=False,
+                            heights_equal='all',
+                            gap='7px',
+                            fill=False,
+                            fillable=True,
+                        ),
+                        ui.span(
+                            ui.HTML('<b>Stellar SED</b> '),
+                            ui.tooltip(
+                                ui.input_action_link(
+                                    id='upload_sed',
+                                    label='',
+                                    icon=fa.icon_svg("file-arrow-up", fill='black'),
+                                ),
+                                'Upload SED',
+                                id='sed_up_tooltip',
+                                placement='top',
+                            ),
+                            # bookmarks
+                            ui.tooltip(
+                                ui.input_action_link(
+                                    id='bookmark_sed',
+                                    label='',
+                                    icon=fa.icon_svg("star", style='regular', fill='black'),
+                                ),
+                                'Bookmark SED',
+                                id='sed_book_tooltip',
+                                placement='top',
+                            ),
+                            # clear
+                            ui.panel_conditional(
+                                "input.has_sed_bookmarks",
+                                ui.tooltip(
+                                    ui.input_action_link(
+                                        id='clear_sed_bookmarks',
+                                        label='',
+                                        icon=fa.icon_svg("circle-xmark", style='regular', fill='black'),
+                                    ),
+                                    'Clear all SED bookmarks',
+                                    id='sed_clear_tooltip',
+                                    placement='top',
+                                ),
+                            ),
+                        ),
+                        ui.input_select(
+                            id="sed_type",
+                            label='',
+                            choices=sed_choices,
+                            selected=list(sed_choices)[0],
+                        ),
+                        ui.input_select(
+                            id="sed",
+                            label="",
+                            choices=sed_dict[list(sed_choices)[0]],
+                        ),
+                        class_="px-2 py-1 pb-2 m-0 gap-2",
+                        style=card_style,
+                        fill=False,
+                    ),
+                    fill=False,
+                ),
             ),
             # The planet
             ui.card(
@@ -1625,12 +1645,9 @@ def server(input, output, session):
             filename = f'{key.lower()}_{target}_waltzer_tso.dat'
             savefile = Path(f'{current_dir}/{filename}')
 
-            labs, data = data_clipboard.get()
-            np.savetxt(
-                savefile,
-                data,
-                header=labs,
-            )
+            data = data_clipboard.get()
+            with open(savefile, 'w') as f:
+                f.write(data)
             message = f"TSO model saved to file: '{savefile}'"
 
         ui.notification_show(message, type="message", duration=5)
@@ -2642,12 +2659,8 @@ def server(input, output, session):
             efficiency=efficiency, noiseless=noiseless,
         )
 
-        head = 'wl(um)  depth  depth_error  wl_half_width(um)'
-        clip = np.vstack([
-            np.hstack([d for d in t_data])
-            for t_data in tso_data[1:]
-        ]).T
-        data_clipboard.set([head, clip])
+        formatted_data = data_to_text(tso_data[1:], 'tso')
+        data_clipboard.set(formatted_data)
 
         wl_scale = input.tso_wl_scale.get()
         wl_min = input.tso_wl_min.get()

@@ -61,10 +61,18 @@ def data_to_text(data, data_type):
                 f'{row[3]:.8e}  {row[4]:.8e}\n'
             )
 
-    if data_type == 'tso_depth':
-        pass
-    if data_type == 'tso_snr':
-        pass
+    if data_type == 'tso':
+        data = np.vstack([
+            np.hstack([d for d in t_data])
+            for t_data in data
+        ]).T
+        text = '# wl(um)  half_width(um)  depth(%)        depth_error(%)\n'
+        for row in data:
+            text += (
+                f'{row[0]:.7f}   {row[3]:.7f}   '
+                f'{row[1]/pc.percent:16.8e}  {row[2]/pc.percent:.8e}\n'
+            )
+
     if data_type == 'tso_uncert':
         pass
 
