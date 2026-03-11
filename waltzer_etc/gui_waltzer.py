@@ -226,6 +226,7 @@ def make_tso_labels(tso_runs):
     return tso_labels
 
 
+# TBD delete these
 cache_target = {}
 cache_acquisition = {}
 cache_saturation = {}
@@ -235,11 +236,13 @@ spectra = {
     'transit': {},
     'eclipse': {},
     'sed': {},
+    'extended': {},
 }
 bookmarked_spectra = {
     'transit': [],
     'eclipse': [],
     'sed': [],
+    'extended': [],
 }
 
 # Load spectra from user-defined folder and/or from default folder
@@ -275,6 +278,10 @@ sed_units = {
     "f_nu": f"{ergs_s_cm2} cm (wavenumber space)",
     "f_lambda": f"{ergs_s_cm2} cm\u207b\u00b9 (wavelength space)",
     "mJy": "mJy",
+}
+
+extended_units = {
+    "mJy_arcsec2": 'mJy arcsec\u207b\u00b2',
 }
 
 layout_kwargs = dict(
@@ -412,7 +419,7 @@ app_ui = ui.page_fluid(
                         label='',
                         choices={
                             'point': 'Point Source',
-                            #'extended': 'Extended Source',
+                            'extended': 'Extended Source',
                         },
                         selected='point',
                     ),
@@ -444,6 +451,96 @@ app_ui = ui.page_fluid(
                     fill=False,
                 ),
                 fill=False,
+            ),
+            # Extended source target
+            ui.panel_conditional(
+                "input.source_type === 'extended'",
+                ui.card(
+                    ui.card_body(
+                        ui.span(
+                            ui.HTML('<b>Extended sources</b> '),
+                            ui.tooltip(
+                                ui.input_action_link(
+                                    id='upload_extended',
+                                    label='',
+                                    icon=fa.icon_svg("file-arrow-up", fill='black'),
+                                ),
+                                'Upload spectrum',
+                                id='extended_up_tooltip',
+                                placement='top',
+                            ),
+                            # bookmarks
+                            ui.tooltip(
+                                ui.input_action_link(
+                                    id='bookmark_extended',
+                                    label='',
+                                    icon=fa.icon_svg("meteor", style='solid', fill='gray'),
+                                ),
+                                'Bookmark spectrum',
+                                id='extended_book_tooltip',
+                                placement='top',
+                            ),
+                            # clear
+                            ui.panel_conditional(
+                                "input.has_extended_bookmarks",
+                                ui.tooltip(
+                                    ui.input_action_link(
+                                        id='clear_extended_bookmarks',
+                                        label='',
+                                        icon=fa.icon_svg("circle-xmark", style='regular', fill='black'),
+                                    ),
+                                    'Clear all bookmarks',
+                                    id='extended_clear_tooltip',
+                                    placement='top',
+                                ),
+                            ),
+                        ),
+                        ui.tooltip(
+                            ui.input_select(
+                                id="extended_source",
+                                label="",
+                                choices=list(spectra['extended']),
+                            ),
+                            'Upload a source spectrum',
+                            id='extended_tooltip',
+                            placement='right',
+                        ),
+                        # Source properties
+                        ui.layout_column_wrap(
+                            # Row 1
+                            ui.HTML("Shape:"),
+                            ui.input_select(
+                                id="extended_type",
+                                label='',
+                                choices={
+                                    'flat': 'Flat',
+                                    'power_law': 'Power Law',
+                                }
+                                #selected=list(sed_choices)[0],
+                            ),
+                            # Row 2
+                            ui.p('Radius (arcsec):'),
+                            ui.input_numeric("source_radius", "", value=0.001),
+                            # Row 3
+                            ui.p("Pow law index:"),
+                            ui.input_numeric(
+                                id="pow_law_index",
+                                label="",
+                                value=1.0,
+                            ),
+                            width=1/2,
+                            fixed_width=False,
+                            heights_equal='all',
+                            gap='7px',
+                            fill=False,
+                            fillable=True,
+                        ),
+                        class_="px-2 py-1 pb-2 m-0 gap-2",
+                        style=card_style,
+                        fill=False,
+                    ),
+                    fill=False,
+                ),
             ),
             # Point source target
             ui.panel_conditional(
@@ -1277,6 +1374,7 @@ def server(input, output, session):
     update_catalog_flag = reactive.Value(False)
     update_sed_flag = reactive.Value(None)
     update_depth_flag = reactive.Value(None)
+    update_extended_flag = reactive.Value(None)
     uploaded_units = reactive.Value(None)
     acq_target_list = reactive.Value(None)
     current_acq_science_target = reactive.Value(None)
@@ -2243,6 +2341,24 @@ def server(input, output, session):
         ui.update_tooltip('depth_tooltip', tooltip_text)
 
 
+    @reactive.effect
+    #@reactive.event(input.obs_geometry, update_depth_flag)
+    @reactive.event(update_extended_flag)
+    def update_extended_spectra():
+        models = list(spectra['extended'])
+        selected = input.extended_source.get()
+
+        if selected not in models:
+            selected = None if len(models) == 0 else models[0]
+        ui.update_select("extended_source", choices=models, selected=selected)
+
+        if len(models) > 0:
+            tooltip_text = ''
+        else:
+            tooltip_text = f'Upload a source spectrum'
+        ui.update_tooltip('extended_tooltip', tooltip_text)
+
+
     @render.text
     @reactive.event(input.obs_geometry)
     def transit_dur_label():
@@ -2365,6 +2481,44 @@ def server(input, output, session):
 
 
     @reactive.effect
+    @reactive.event(input.upload_extended)
+    def _():
+        ui.update_radio_buttons(id='upload_wl_units', selected='micron')
+        uploaded_units.set('mJy_arcsec2')
+        m = ui.modal(
+            ui.markdown(
+                "Input files must be plan-text files with two columns, "
+                "the first one being the wavelength and "
+                "the second one the SED of the extended source.<br>**Make sure "
+                "the input units are correct before uploading a file!**"
+            ),
+            ui.input_radio_buttons(
+                id="upload_wl_units",
+                label='Wavelength units:',
+                choices=['micron'],
+                selected='micron',
+                width='100%',
+            ),
+            ui.input_radio_buttons(
+                id="upload_units",
+                label='Radiance units:',
+                choices=extended_units,
+                width='100%',
+            ),
+            ui.input_file(
+                id="upload_file",
+                label='',
+                button_label="Browse",
+                multiple=True,
+                width='100%',
+            ),
+            title="Upload extended-source spectrum",
+            easy_close=True,
+        )
+        ui.modal_show(m)
+
+
+    @reactive.effect
     @reactive.event(input.upload_units)
     def _():
         uploaded_units.set(input.upload_units.get())
@@ -2377,10 +2531,10 @@ def server(input, output, session):
         if not new_model:
             return
 
-        # The units tell this function SED or depth spectrum:
         filename = new_model[0]['name']
         filepath = new_model[0]['datapath']
 
+        # The units tell stellar SED, extended source, or depth spectrum:
         wl_units = input.upload_wl_units.get()
         units = uploaded_units.get()
 
@@ -2417,6 +2571,14 @@ def server(input, output, session):
                 'filename': f'input_{filename}',
             }
             update_sed_flag.set(label)
+        elif units in extended_units:
+            spectra['extended'][label] = {
+                'wl': wl,
+                'radiance': model,
+                'units': units,
+                'filename': filename,
+            }
+            update_extended_flag.set(label)
 
 
     @reactive.effect
