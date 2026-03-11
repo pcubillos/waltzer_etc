@@ -220,9 +220,8 @@ class Detector():
 
         # TBD: In future this might depend on {RA,dec} of targets
         # Background flux (erg s-1 cm-2 A-1 arcsec-2)
-        wl_bkg, sky = np.loadtxt(f'{ROOT}/data/background.txt', unpack=True)
-        # Convert wavelength from angstrom to micron:
-        wl_bkg /= pc.um/pc.A
+        bkg_file = f'{ROOT}/data/background_total.dat'
+        wl_bkg, sky = np.loadtxt(bkg_file, unpack=True)
         self.bkg_model = si.interp1d(
             wl_bkg, sky, kind='slinear', bounds_error=False,
         )
