@@ -227,9 +227,7 @@ def make_tso_labels(tso_runs):
 
 
 # TBD delete these
-cache_target = {}
 cache_acquisition = {}
-cache_saturation = {}
 
 # Planet and stellar spectra
 spectra = {
@@ -1483,115 +1481,6 @@ def server(input, output, session):
         ui.modal_show(m)
 
 
-    @reactive.effect
-    @reactive.event(input.display_tso_run)
-    def update_full_state():
-        """
-        When a user chooses a run from display_tso_run, update the entire
-        front end to match the run setup.
-        """
-        pass
-        #tso_key = input.display_tso_run.get()
-        #if tso_key is None:
-        #    return
-        #key, tso_label = tso_key.split('_', maxsplit=1)
-        #tso = tso_runs[key][tso_label]
-
-        #detector = get_detector(inst, mode, detectors)
-
-        ## The instrumental setting
-        #choices = detector.get_constrained_val('filters')
-        #ui.update_select(
-        #    'filter',
-        #    label=detector.filter_label,
-        #    choices=choices,
-        #    selected=filter,
-        #)
-
-        ## The target:
-        #current_target = input.target.get()
-        #current_tdur = _safe_num(input.t_dur.get(), default=2.0, cast=float)
-
-        #name = tso['target']
-        #t_dur = float(tso['transit_dur'])
-        #planet_model_type = tso['planet_model_type']
-        #ui.update_selectize('target', selected=name)
-        #norm_band = tso['norm_band']
-        #norm_mag = str(tso['norm_mag'])
-        #sed_type = tso['sed_type']
-
-        #if name != current_target:
-        #    if name not in cache_target:
-        #        cache_target[name] = {}
-        #    cache_target[name]['t_eff'] = tso['t_eff']
-        #    cache_target[name]['log_g'] = tso['log_g']
-        #    cache_target[name]['t_dur'] = t_dur
-        #    cache_target[name]['depth_label'] = tso['depth_label']
-        #    cache_target[name]['rprs_sq'] = tso['rprs_sq']
-        #    cache_target[name]['teq_planet'] = tso['teq_planet']
-        #    cache_target[name]['norm_band'] = norm_band
-        #    cache_target[name]['norm_mag'] = norm_mag
-        #else:
-        #    ui.update_numeric('t_eff', value=float(tso['t_eff']))
-        #    ui.update_numeric('log_g', value=float(tso['log_g']))
-        #    ui.update_numeric('t_dur', value=float(t_dur))
-        #    ui.update_numeric('magnitude', value=float(norm_mag))
-
-        ## sed_type, sed_model, norm_band, norm_mag, sed_label
-        #ui.update_select('sed_type', selected=sed_type)
-        #reset_sed = (
-        #    sed_type != input.sed_type.get()
-        #    or float(tso['t_eff']) != _safe_num(input.t_eff.get(), default=float(tso['t_eff']), cast=float)
-        #    or float(tso['log_g']) != _safe_num(input.log_g.get(), default=float(tso['log_g']), cast=float)
-        #)
-        #if sed_type in sed_dict:
-        #    if reset_sed:
-        #        preset_sed.set(tso['sed_model'])
-        #    else:
-        #        choices = sed_dict[sed_type]
-        #        selected = tso['sed_model']
-        #        ui.update_select("sed", choices=choices, selected=selected)
-
-        ## The observation
-        #warning_text.set(tso['warnings'])
-        #obs_geometry = tso['obs_geometry']
-        #ui.update_select('obs_geometry', selected=obs_geometry)
-        #if float(t_dur) != float(current_tdur):
-        #    preset_obs_dur.set(tso['obs_dur'])
-        #else:
-        #    ui.update_numeric('obs_dur', value=float(tso['obs_dur']))
-
-        #choices = depth_choices[obs_geometry]
-        #ui.update_select(
-        #    "planet_model_type", choices=choices, selected=planet_model_type,
-        #)
-        #if planet_model_type == 'Input':
-        #    choices = list(spectra[obs_geometry])
-        #    selected = tso['depth_label']
-        #    ui.update_select("depth", choices=choices, selected=selected)
-        #elif planet_model_type == 'Flat':
-        #    ui.update_numeric("transit_depth", value=tso['rprs_sq'])
-        #elif planet_model_type == 'Blackbody':
-        #    ui.update_numeric("eclipse_depth", value=tso['rprs_sq'])
-        #    ui.update_numeric("teq_planet", value=tso['teq_planet'])
-
-        ## TSO plot popover menu
-        #if tso['is_tso']:
-        #    min_wl, max_wl = jwst._get_tso_wl_range(tso)
-        #    ui.update_numeric('tso_wl_min', value=min_wl)
-        #    ui.update_numeric('tso_wl_max', value=max_wl)
-
-        #    resolution = int(_safe_num(input.tso_resolution.get(), default=250, cast=int))
-        #    n_obs = int(_safe_num(input.n_obs.get(), default=1, cast=int))
-        #    units = 'percent'  if obs_geometry=='transit' else 'ppm'
-        #    ui.update_select('tso_depth_units', selected=units)
-        #    min_depth, max_depth, step = jwst._get_tso_depth_range(
-        #        tso, resolution, units,
-        #    )
-        #    ui.update_numeric('tso_depth_min', value=min_depth, step=step)
-        #    ui.update_numeric('tso_depth_max', value=max_depth, step=step)
-
-
     # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
     # Instrument
     @reactive.effect
@@ -2099,16 +1988,10 @@ def server(input, output, session):
             ui.update_selectize('target', selected=target.planet)
 
         # Physical properties:
-        if target.planet in cache_target:
-            t_eff  = cache_target[target.planet]['t_eff']
-            log_g = cache_target[target.planet]['log_g']
-            t_dur = cache_target[target.planet]['t_dur']
-            magnitude = cache_target[target.planet]['norm_mag']
-        else:
-            t_eff = as_str(target.teff, '.0f', '')
-            log_g = as_str(target.logg_star, '.2f', '')
-            t_dur = as_str(target.transit_dur, '.3f', '')
-            magnitude = f'{target.v_mag:.3f}'
+        t_eff = as_str(target.teff, '.0f', '')
+        log_g = as_str(target.logg_star, '.2f', '')
+        t_dur = as_str(target.transit_dur, '.3f', '')
+        magnitude = f'{target.v_mag:.3f}'
 
         ui.update_numeric('t_eff', value=float(t_eff))
         ui.update_numeric('log_g', value=float(log_g))
@@ -2132,19 +2015,13 @@ def server(input, output, session):
         esasky_command.set([delete_catalog, delete_footprint, goto])
 
         # Observing properties:
-        if name in cache_target and cache_target[name]['rprs_sq'] is not None:
-            rprs_square_percent = cache_target[name]['rprs_sq']
-            teq_planet = cache_target[name]['teq_planet']
-            cache_target[name]['rprs_sq'] = None
-            cache_target[name]['teq_planet'] = None
-        else:
-            teq_planet = np.round(target.eq_temp, decimals=0)
-            if np.isnan(teq_planet):
-                teq_planet = 0
-            rprs_square = target.rprs**2.0
-            if np.isnan(rprs_square):
-                rprs_square = 0.0
-            rprs_square_percent = np.round(100*rprs_square, decimals=4)
+        teq_planet = np.round(target.eq_temp, decimals=0)
+        if np.isnan(teq_planet):
+            teq_planet = 0
+        rprs_square = target.rprs**2.0
+        if np.isnan(rprs_square):
+            rprs_square = 0.0
+        rprs_square_percent = np.round(100*rprs_square, decimals=4)
 
         if rprs_square_percent is not None:
             ui.update_numeric("transit_depth", value=rprs_square_percent)
@@ -2320,15 +2197,8 @@ def server(input, output, session):
 
         models = list(spectra[obs_geometry])
         name = input.target.get()
-        cached = (
-            name in cache_target and
-            cache_target[name]['depth_label'] is not None
-        )
         selected = input.depth.get()
-        if cached:
-            selected = cache_target[name]['depth_label']
-            cache_target[name]['depth_label'] = None
-        elif selected not in models:
+        if selected not in models:
             selected = None if len(models) == 0 else models[0]
         ui.update_select("depth", choices=models, selected=selected)
 
