@@ -48,22 +48,39 @@ from gui_utils import (
 import gui_plotly as plt
 
 
-def searchsorted_closest(array, val):
+def searchsorted_closest(array, val, readout='full_frame'):
     """
     Find index closest to val in a sorted array
-    """
-    if val <= array[0]:
-        return 0
-    if val >= array[-1]:
-        return len(array) - 1
 
-    idx = np.searchsorted(array[:-1], val)
-    d_lo = val - array[idx-1]
-    d_hi = array[idx] - val
+    Examples
+    --------
+    >>> bins = np.arange(6000, 0, -1)
+    >>> resolutions = 6000.0 / bins
+    >>> res = 0.0
+    >>> for readout in ['full_frame', 'bright', 'faint', 'ultra_faint']:
+    >>>     idx = searchsorted_closest(resolutions, res, readout)
+    >>>     print(f"{idx:4d}  {resolutions[idx]:6.1f}  {bins[idx]:4d}")
+    """
+    rebin = 1
+    if readout == 'faint':
+        rebin = 2
+    elif readout == 'ultra_faint':
+        rebin = 4
+
+    samples = array[::rebin]
+
+    if val <= samples[0]:
+        return 0
+    if val >= samples[-1]:
+        return (len(samples) - 1) * rebin
+
+    idx = np.searchsorted(samples[:-1], val)
+    d_lo = val - samples[idx-1]
+    d_hi = samples[idx] - val
 
     if d_lo < d_hi:
-        return idx -1
-    return idx
+        return (idx - 1) * rebin
+    return idx*rebin
 
 
 def masked_throughput(masks):
@@ -2493,19 +2510,19 @@ def server(input, output, session):
 
 
     @reactive.effect
-    @reactive.event(input.tso_resolution, input.share_resolution)
+    @reactive.event(input.tso_resolution, input.share_resolution, input.readout)
     def update_actual_resolution():
         resolution = input.tso_resolution.get()
+        readout = input.readout.get()
         if input.share_resolution.get():
             ui.update_numeric(id='tso_resolution_nuv', value=resolution)
 
-        if resolution == 0.0:
-            binsize = 1
-            actual_resolution.set(6000.0)
-        else:
-            idx = searchsorted_closest(resolutions, resolution)
-            binsize = bins[idx]
-            actual_resolution.set(resolutions[idx])
+        if resolution <= 0.0 or resolution is None:
+            resolution = 6000.0
+        idx = searchsorted_closest(resolutions, resolution, readout)
+        #print(readout, idx, bins[idx], resolution, resolutions[idx])
+        binsize = bins[idx]
+        actual_resolution.set(resolutions[idx])
 
         if binsize != wl_binsize.get():
             wl_binsize.set(binsize)
@@ -2518,18 +2535,17 @@ def server(input, output, session):
         input.tso_resolution, input.tso_resolution_nuv, input.share_resolution,
     )
     def update_actual_resolution_nuv():
+        readout = input.readout.get()
         if input.share_resolution.get():
             resolution = input.tso_resolution.get()
         else:
             resolution = input.tso_resolution_nuv.get()
 
-        if resolution == 0.0:
-            binsize = 1
-            actual_resolution_nuv.set(6000.0)
-        else:
-            idx = searchsorted_closest(resolutions, resolution)
-            binsize = bins[idx]
-            actual_resolution_nuv.set(resolutions[idx])
+        if resolution == 0.0 or resolution is None:
+            resolution = 6000.0
+        idx = searchsorted_closest(resolutions, resolution, readout)
+        binsize = bins[idx]
+        actual_resolution_nuv.set(resolutions[idx])
 
         if binsize != wl_binsize_nuv.get():
             wl_binsize_nuv.set(binsize)
