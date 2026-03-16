@@ -135,6 +135,7 @@ class Detector():
         config = configparser.ConfigParser()
         config.read(detector_cfg)
         det = config['detector']
+        self.diameter = diameter
         self.band = det.get('band')
         self.mode = det.get('mode')
 

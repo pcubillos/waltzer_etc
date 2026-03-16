@@ -12,6 +12,7 @@ import pandas as pd
 import pyratbay.spectrum as ps
 from .snr_waltzer import Detector, calc_variances
 from . import sed
+from .version import __version__ as waltzer_version
 
 
 def waltzer_sample(
@@ -187,6 +188,8 @@ def waltzer_sample(
             tso[band] = det.make_tso(wl, flux)
 
         tso['meta'] = {
+            'version': waltzer_version,
+            'mirror_diameter': float(det.diameter),
             'bands': bands,
             'efficiency': efficiency,
             'n_obs': n_obs,
