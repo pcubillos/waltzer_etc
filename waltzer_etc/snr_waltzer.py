@@ -519,7 +519,7 @@ def calc_variances(
     var_source = np.abs(bin_flux)
 
     # Wavelength-dependent cross dispersion size
-    npix = tso['cross_dispersion'][::rebin]
+    npix = tso['cross_dispersion'][::rebin][0:nwave]
 
     # Background number of photons
     var_background = npix*(1+npix/nsky) * bin_bkg
