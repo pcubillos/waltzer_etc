@@ -22,6 +22,7 @@ import pyratbay.spectrum as ps
 
 from waltzer_etc.utils import ROOT, inst_convolution
 from waltzer_etc.__main__ import parse_args
+from waltzer_etc import __version__ as waltzer_version
 import waltzer_etc as waltz
 import waltzer_etc.sed as sed
 from gui_utils import (
@@ -515,7 +516,6 @@ app_ui = ui.page_fluid(
                                     'flat': 'Flat',
                                     'power_law': 'Power Law',
                                 }
-                                #selected=list(sed_choices)[0],
                             ),
                             # Row 2
                             ui.p('Radius (arcsec):'),
@@ -912,7 +912,7 @@ app_ui = ui.page_fluid(
                             }
                         ),
                         ui.tooltip(
-                            'Apertures:',
+                            'Aperture:',
                             'NUV and VIS',
                             id='aper_tooltip',
                             placement='bottom',
@@ -1562,7 +1562,10 @@ def server(input, output, session):
 
         tso_label = make_tso_label(input, spectra)
 
+        # Note: this should mirror the waltzer_sample() dictionary
         tso['meta'] = {
+            'version': waltzer_version,
+            'mirror_diameter': float(det.diameter),
             'bands': bands,
             'efficiency': efficiency,
             'n_obs': n_obs,
