@@ -25,6 +25,20 @@ DEFAULT_DETS = {
     'nir': f'{ROOT}/data/detectors/waltzer_nir.cfg',
 }
 
+# Slit widths in arcsec for each band/configuration
+SLIT_WIDTHS = {
+    'nuv': {
+        'wide': 60,
+        'medium': 20,
+        'narrow': 10,
+    },
+    'vis': {
+        'wide': 60,
+        'medium': 30,
+        'narrow': 15,
+    },
+}
+
 
 def calc_collecting_area(diameter, band):
     """
@@ -137,7 +151,7 @@ class Detector():
         det = config['detector']
         self.diameter = diameter
         self.band = det.get('band')
-        self.mode = det.get('mode')
+        self.type = det.get('mode')
 
         self.resolution = det.getfloat('resolution')
         self.pix_scale = det.getfloat('pix_scale')
@@ -149,12 +163,12 @@ class Detector():
 
         # Number of pixels in source and in sky-background
         aperture_radius = self.aperture // 2
-        if self.mode == 'photometry':
+        if self.type == 'photometry':
             self.npix = int(np.pi*aperture_radius**2)
             sky_in = aperture_radius
             sky_out = 2*aperture_radius
             self.nsky = int(np.pi * (sky_out**2 - sky_in**2))
-        elif self.mode == 'spectroscopy':
+        elif self.type == 'spectroscopy':
             self.npix = 2*aperture_radius
             sky_in = aperture_radius
             sky_out = 3*aperture_radius
@@ -201,7 +215,7 @@ class Detector():
         self.nwave = len(wl_edges) - 1
         self.over_sampling = over_sampling
 
-        if self.mode == 'photometry':
+        if self.type == 'photometry':
             self.wl = np.array([0.5 * (self.wl_max + self.wl_min)])
             self.half_widths = np.array([0.5 * (self.wl_max - self.wl_min)])
         self.nwave = len(self.wl)
@@ -232,7 +246,7 @@ class Detector():
         self.e_background = None
 
 
-    def photon_spectrum(self, wl, flux, readout='full_frame'):
+    def photon_spectrum(self, wl, flux, aperture='medium'):
         """
         Compute spectra in photons per second.
 
@@ -297,7 +311,11 @@ class Detector():
         photons = photons_nu * pc.c / (wl*pc.um)**2.0 * pc.um
 
         # Background flux (erg s-1 cm-2 A-1 pixel-1)
-        bkg_flux = self.bkg_model(wl) * self.pix_scale**2.0
+        if self.type == 'photometry':
+            bkg_flux = self.bkg_model(wl) * self.pix_scale**2.0
+        else:
+            slit_width = SLIT_WIDTHS[self.band][aperture]
+            bkg_flux = self.bkg_model(wl) * slit_width * self.pix_scale
         # Convert flux (erg s-1 cm-2 A-1 pixel-1) to photons s-1 um-1 pixel-1
         bkg_photons = bkg_flux / photon_energy * throughput * pc.um/pc.A
 
@@ -306,30 +324,24 @@ class Detector():
         return photons, bkg_photons
 
 
-    def make_tso(self, wl=None, flux=None):
+    def make_tso(self, wl, flux, aperture='medium'):
         """
         Generate a TSO dictionary summarizing the detector and scence data.
         """
         # Source flux and variance in e- per second
-        if wl is not None and flux is not None:
-            self.photon_spectrum(wl, flux)
-        if self.e_flux is None:
-            raise ValueError(
-                'Need to call function with SED values to compute '
-                'variances, e.g.: make_tso(wl, flux)'
-            )
-
+        self.photon_spectrum(wl, flux, aperture)
         throughput = self.throughput(self.hires_wl)
-        # no integration, no covolution yet
 
         tso = {
+            'band': self.band,
             'hires_wl': self.hires_wl,
             'flux': self.e_flux,
             'background': self.e_background,
             'throughput': throughput,
             'dark': self.dark,
             'read_noise': self.read_noise,
-            'det_type': self.mode,
+            'det_type': self.type,
+            'aperture': aperture,
             'cross_dispersion': self.cross_dispersion,
             'npix': self.npix,
             'nsky': self.nsky,
@@ -420,7 +432,8 @@ class Detector():
 
 
 def calc_variances(
-        tso, readout='full_frame', transit_flux=None, exp_time=300.0,
+        tso, readout='full_frame', aperture='medium',
+        transit_flux=None, exp_time=300.0,
     ):
     """
     Compute the electrons per second signal of the source,
@@ -434,6 +447,8 @@ def calc_variances(
         A WALTzER tso output for a given target.
     readout: String
         WALTzER readout mode. Yet to be fully tested.
+    aperture: String
+        Slit aperture position (width): 'narrow', 'medium', 'wide'.
     transit_flux: 1D float array
         An optional second flux spectrum to compute the variances for.
         Typically, an in-transit or an out-of-eclipse spectrum.
@@ -486,6 +501,7 @@ def calc_variances(
         rebin = 1
         wl = [0.5 * (tso['wl_max']+tso['wl_min'])]
         half_widths = [0.5 * (tso['wl_max']-tso['wl_min'])]
+        slit_scale = 1.0
 
     elif tso['det_type'] == 'spectroscopy':
         rebin = 1
@@ -496,6 +512,9 @@ def calc_variances(
         nwave = tso['nwave'] // rebin
         binsize = tso['over_sampling'] * rebin
 
+        band = tso['band']
+        slit_width = tso['aperture']
+        slit_scale = SLIT_WIDTHS[band][aperture] / SLIT_WIDTHS[band][slit_width]
         # Fluxes in photons per second
         bin_flux = np.zeros(nwave)
         bin_t_flux = np.zeros(nwave)
@@ -522,7 +541,7 @@ def calc_variances(
     npix = tso['cross_dispersion'][::rebin][0:nwave]
 
     # Background number of photons
-    var_background = npix*(1+npix/nsky) * bin_bkg
+    var_background = npix*(1+npix/nsky) * bin_bkg * slit_scale
 
     # Dark number of photons
     var_dark = rebin * npix*(1+npix/nsky) * tso['dark']
@@ -679,7 +698,8 @@ def simulate_spectrum(
         tso, depth_model=None, obs_type='transit', n_obs=1,
         transit_dur=None, obs_dur=None,
         binsize=None, resolution=None, noiseless=False,
-        readout='full_frame', efficiency=None, ret_variances=False,
+        readout='full_frame', aperture='medium', efficiency=None,
+        ret_variances=False,
     ):
     """
     Simulate a WALTzER TSO observation, that is, a transit or eclipse
@@ -719,6 +739,8 @@ def simulate_spectrum(
         the signal's uncertainty.  Set to True to return the ground truth
     readout: String
         WALTzER readout mode. Yet to be fully tested, set at your own risk.
+    aperture: String
+        Slit aperture position (width): 'narrow', 'medium', 'wide'.
     efficiency: Float
         WALTzER duty cycle efficiency. If None, take value from tso.
     ret_variances: Bool
@@ -900,9 +922,7 @@ def simulate_spectrum(
             dt_in = total_time
 
         # Data at WALTzER sampling and resolving power
-        var_data = calc_variances(
-            det, transit_flux=transit_flux, readout=readout,
-        )
+        var_data = calc_variances(det, readout, aperture, transit_flux)
         wl = var_data[0]
         half_width = var_data[1]
         flux = var_data[2]

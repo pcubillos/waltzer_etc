@@ -925,9 +925,9 @@ app_ui = ui.page_fluid(
                             label='',
                             choices={
                                 'full_frame': 'Full frame',
-                                #'bright': 'Bright',
-                                #'faint': 'Faint',
-                                #'ultra_faint': 'Ultra faint',
+                                'bright': 'Bright',
+                                'faint': 'Faint',
+                                'ultra_faint': 'Ultra faint',
                             }
                         ),
                         ui.tooltip(
@@ -940,9 +940,9 @@ app_ui = ui.page_fluid(
                             id='aperture',
                             label='',
                             choices={
-                                '10_15': '10" & 15"',
-                                '20_30': '20" & 30"',
-                                '60_60': '60" & 60"',
+                                'narrow': 'Narrow (10"/15")',
+                                'medium': 'Medium (20"/30")',
+                                'wide': 'Wide (60"/60")',
                             }
                         ),
                         class_="p-0 m-0",
@@ -1544,8 +1544,9 @@ def server(input, output, session):
         name = input.target.get()
 
         # Get the variances first
-        efficiency = input.efficiency.get() * pc.percent
         bands = list(input.bands.get())
+        efficiency = input.efficiency.get() * pc.percent
+        aperture = input.aperture.get()
         n_obs = input.n_obs.get()
 
         obs_geometry = input.obs_geometry.get()
@@ -1591,7 +1592,7 @@ def server(input, output, session):
         tso = {}
         for band in bands:
             det = detectors[band]
-            tso[band] = det.make_tso(wl, flux)
+            tso[band] = det.make_tso(wl, flux, aperture)
 
         tso_label = make_tso_label(input, spectra)
 
@@ -2642,6 +2643,7 @@ def server(input, output, session):
         tso = tso_runs[key][tso_label]
 
         plot_type = input.noise_plot.get()
+        aperture = input.aperture.get()
         readout = input.readout.get()
         binsize = wl_binsize.get()
         wl_scale = input.noise_wl_scale.get()
@@ -2654,7 +2656,7 @@ def server(input, output, session):
         if plot_type == 'variance':
             bands = tso['meta']['bands']
             var_data = [
-                waltz.calc_variances(tso[band], readout=readout)
+                waltz.calc_variances(tso[band], readout, aperture)
                 for band in bands
             ]
 
