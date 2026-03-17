@@ -2645,6 +2645,11 @@ def server(input, output, session):
         readout = input.readout.get()
         binsize = wl_binsize.get()
         wl_scale = input.noise_wl_scale.get()
+        rebin = 1
+        if readout == 'faint':
+            rebin = 2
+        elif readout == 'ultra_faint':
+            rebin = 4
 
         if plot_type == 'variance':
             bands = tso['meta']['bands']
@@ -2660,7 +2665,7 @@ def server(input, output, session):
                 var_data,
                 bands,
                 wl_scale=wl_scale,
-                binsize=binsize,
+                binsize=binsize//rebin,
             )
             return fig
 
