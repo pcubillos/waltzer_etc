@@ -1437,6 +1437,7 @@ def server(input, output, session):
     programs_info = reactive.Value(None)
     clipboard = reactive.Value('')
     data_clipboard = reactive.Value(None)
+    phantom_variance = reactive.Value(0.0)
 
     # Invisible flags
     @reactive.effect
@@ -1467,6 +1468,14 @@ def server(input, output, session):
                     min=30.0,
                     max=50.0,
                 ),
+                ui.input_numeric(
+                    id="phantom_variance",
+                    label="Phantom variance (e⁻ s⁻¹ pixel⁻¹)",
+                    value=0.0,
+                    step=5.0,
+                    min=0.0,
+                    max=300.0,
+                ),
                 ui.input_action_button(
                     id="set_mirror_size",
                     label="Update",
@@ -1493,6 +1502,7 @@ def server(input, output, session):
             'display_tso_run',
             choices=make_tso_labels({}),
         )
+        phantom_variance.set(input.phantom_variance.get())
         ui.modal_remove()
 
 
@@ -2677,6 +2687,7 @@ def server(input, output, session):
             transit_dur = input.t_dur.get()
             obs_dur = input.obs_dur.get()
             obs_geometry = input.obs_geometry.get()
+            phantom_var = phantom_variance.get()
 
             # Read model
             f_star = load_sed(input, spectra, cache_seds)
@@ -2690,6 +2701,7 @@ def server(input, output, session):
                 aperture=aperture,
                 efficiency=efficiency,
                 ret_variances=True,
+                phantom_var=phantom_var,
             )
 
             formatted_data = data_to_text(flux_data[1:], 'source_snr')
@@ -2730,6 +2742,7 @@ def server(input, output, session):
         n_obs = input.n_obs.get()
         readout = input.readout.get()
         aperture = input.aperture.get()
+        phantom_var = phantom_variance.get()
 
         obs_geometry = input.obs_geometry.get()
         transit_dur = input.t_dur.get()
@@ -2756,6 +2769,7 @@ def server(input, output, session):
             readout=readout,
             aperture=aperture,
             efficiency=efficiency, noiseless=noiseless,
+            phantom_var=phantom_var,
         )
 
         formatted_data = data_to_text(tso_data[1:], 'tso')
