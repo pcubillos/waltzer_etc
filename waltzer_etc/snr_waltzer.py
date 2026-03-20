@@ -582,6 +582,7 @@ def bin_tso_data(
         flux_out=None, var_out=None, dt_out=0.0,
         binsize=None, resolution=None,
         short_to_long=True,
+        rebin=1,
     ):
     """
     Compute binned in- and out-of-transit spectra and their variances
@@ -637,6 +638,7 @@ def bin_tso_data(
 
     # Bin by binsize
     elif resolution is None:
+        binsize = binsize//rebin
         nwave = len(wl)
         if short_to_long:
             bin_idx = np.arange(0, nwave, binsize)
@@ -699,6 +701,7 @@ def simulate_spectrum(
         binsize=None, resolution=None, noiseless=False,
         readout='full_frame', aperture='medium', efficiency=None,
         ret_variances=False,
+        phantom_var=0.0,
     ):
     """
     Simulate a WALTzER TSO observation, that is, a transit or eclipse
@@ -920,12 +923,20 @@ def simulate_spectrum(
             transit_flux = None
             dt_in = total_time
 
+        # Temporary correction to binsize, needs to be tested for edge cases
+        rebin = 1
+        if readout == 'faint':
+            rebin = 2
+        elif readout == 'ultra_faint':
+            rebin = 4
+
         # Data at WALTzER sampling and resolving power
         var_data = calc_variances(det, readout, aperture, transit_flux)
         wl = var_data[0]
         half_width = var_data[1]
         flux = var_data[2]
         variance = np.sum(np.array(var_data[2:6]), axis=0)
+        variance += phantom_var*rebin
 
         if obs_type == 'stare':
             flux_out = None
@@ -934,16 +945,10 @@ def simulate_spectrum(
             # eclipse
             flux_out = var_data[6]
             var_out = np.sum(np.array(var_data[3:7]), axis=0)
+            var_out += phantom_var*rebin
             if obs_type == 'transit':
                 flux, flux_out = flux_out, flux
                 variance, var_out = var_out, variance
-
-        # Temporary correction to binsize, needs to be tested for edge cases
-        rebin = 1
-        if readout == 'faint':
-            rebin = 2
-        elif readout == 'ultra_faint':
-            rebin = 4
 
         # Bin NUV from long to short, VIS from short to long
         short_to_long = band != 'nuv'
@@ -951,8 +956,9 @@ def simulate_spectrum(
             det['det_type'], wl, half_width,
             flux, variance, dt_in,
             flux_out, var_out, dt_out,
-            binsize[j]//rebin, resolution[j],
+            binsize[j], resolution[j],
             short_to_long,
+            rebin,
         )
 
         if obs_type == 'stare':
