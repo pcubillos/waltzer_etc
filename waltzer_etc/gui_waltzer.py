@@ -2643,8 +2643,8 @@ def server(input, output, session):
         tso = tso_runs[key][tso_label]
 
         plot_type = input.noise_plot.get()
-        aperture = input.aperture.get()
         readout = input.readout.get()
+        aperture = input.aperture.get()
         binsize = wl_binsize.get()
         wl_scale = input.noise_wl_scale.get()
         rebin = 1
@@ -2687,6 +2687,7 @@ def server(input, output, session):
                 tso, depth_model, obs_geometry,
                 n_obs, transit_dur, obs_dur, binsize,
                 readout=readout,
+                aperture=aperture,
                 efficiency=efficiency,
                 ret_variances=True,
             )
@@ -2728,6 +2729,7 @@ def server(input, output, session):
         efficiency = input.efficiency.get() * pc.percent
         n_obs = input.n_obs.get()
         readout = input.readout.get()
+        aperture = input.aperture.get()
 
         obs_geometry = input.obs_geometry.get()
         transit_dur = input.t_dur.get()
@@ -2752,6 +2754,7 @@ def server(input, output, session):
             n_obs, transit_dur, obs_dur,
             band_binsize,
             readout=readout,
+            aperture=aperture,
             efficiency=efficiency, noiseless=noiseless,
         )
 
