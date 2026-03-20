@@ -1438,6 +1438,7 @@ def server(input, output, session):
     clipboard = reactive.Value('')
     data_clipboard = reactive.Value(None)
     phantom_variance = reactive.Value(0.0)
+    is_noiseless = reactive.Value(False)
 
     # Invisible flags
     @reactive.effect
@@ -1476,6 +1477,12 @@ def server(input, output, session):
                     min=0.0,
                     max=300.0,
                 ),
+                ui.input_select(
+                    id="noiseless",
+                    label='Noiseless TSO simulation:',
+                    choices=['True', 'False'],
+                    selected='False',
+                ),
                 ui.input_action_button(
                     id="set_mirror_size",
                     label="Update",
@@ -1503,6 +1510,7 @@ def server(input, output, session):
             choices=make_tso_labels({}),
         )
         phantom_variance.set(input.phantom_variance.get())
+        is_noiseless.set(input.noiseless.get()=='True')
         ui.modal_remove()
 
 
@@ -2743,6 +2751,7 @@ def server(input, output, session):
         readout = input.readout.get()
         aperture = input.aperture.get()
         phantom_var = phantom_variance.get()
+        noiseless = is_noiseless.get()
 
         obs_geometry = input.obs_geometry.get()
         transit_dur = input.t_dur.get()
@@ -2761,7 +2770,7 @@ def server(input, output, session):
         label, wavel, depth = read_depth_spectrum(input, spectra, wl, f_star)
         depth_model = wavel, depth
 
-        noiseless = plot_type == 'snr'
+        noiseless |= plot_type == 'snr'
         tso_data = waltz.simulate_spectrum(
             tso, depth_model, obs_geometry,
             n_obs, transit_dur, obs_dur,
