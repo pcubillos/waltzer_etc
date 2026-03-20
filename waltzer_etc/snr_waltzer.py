@@ -473,8 +473,6 @@ def calc_variances(
     var_transit: 1D float array
         Variance of transit_flux. Only returned when transit_flux is not None.
     """
-    npix = tso['npix']
-    nsky = tso['nsky']
     hires_wl = tso['hires_wl']
     background = tso['background']
     # For the time being, ignore the fact that nreads should be integer
@@ -537,6 +535,7 @@ def calc_variances(
     # Integrate over time
     var_source = np.abs(bin_flux)
 
+    nsky = tso['nsky']
     # Wavelength-dependent cross dispersion size
     npix = tso['cross_dispersion'][::rebin][0:nwave]
 
@@ -939,13 +938,20 @@ def simulate_spectrum(
                 flux, flux_out = flux_out, flux
                 variance, var_out = var_out, variance
 
+        # Temporary correction to binsize, needs to be tested for edge cases
+        rebin = 1
+        if readout == 'faint':
+            rebin = 2
+        elif readout == 'ultra_faint':
+            rebin = 4
+
         # Bin NUV from long to short, VIS from short to long
         short_to_long = band != 'nuv'
         bin_data = bin_tso_data(
             det['det_type'], wl, half_width,
             flux, variance, dt_in,
             flux_out, var_out, dt_out,
-            binsize[j], resolution[j],
+            binsize[j]//rebin, resolution[j],
             short_to_long,
         )
 
