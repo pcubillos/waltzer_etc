@@ -610,6 +610,8 @@ def bin_tso_data(
         Alternative to binsize, bin down at specified resolution.
     short_to_long: Bool
         Binning direction (last bin can have fewer points).
+    rebin: Integer
+        Binning already applied due to readout mode.
     """
     # Fluxes [e- collected] in and out of transit
     # Variance estimations (e- collected) in and out of transit
@@ -627,6 +629,12 @@ def bin_tso_data(
     elif resolution == 0.0:
        binsize = 1
 
+    if binsize is not None:
+        binsize = binsize / rebin
+        fraction = binsize - np.floor(binsize)
+        binsize = binsize if fraction <= 0.5 else np.ceil(binsize)
+        binsize = np.clip(int(binsize), 1, 120000)
+
     # Photometry
     no_binning = (
         det_type == 'photometry'
@@ -638,14 +646,14 @@ def bin_tso_data(
 
     # Bin by binsize
     elif resolution is None:
-        binsize = binsize//rebin
         nwave = len(wl)
         if short_to_long:
             bin_idx = np.arange(0, nwave, binsize)
         else:
             remainder = nwave % binsize
             bin_idx = np.arange(remainder, nwave, binsize)
-            bin_idx = np.append(0, bin_idx)
+            if remainder != 0:
+                bin_idx = np.append(0, bin_idx)
         counts = np.diff(np.append(bin_idx, nwave))
 
         bin_widths = np.add.reduceat(half_width, bin_idx)
@@ -740,13 +748,17 @@ def simulate_spectrum(
         If False, add scatter to simulated spectrum according to
         the signal's uncertainty.  Set to True to return the ground truth
     readout: String
-        WALTzER readout mode. Yet to be fully tested, set at your own risk.
+        WALTzER readout mode, select from: 'full_frame', 'bright',
+        'faint', and 'ultra_faint'.
     aperture: String
         Slit aperture position (width): 'narrow', 'medium', 'wide'.
     efficiency: Float
         WALTzER duty cycle efficiency. If None, take value from tso.
     ret_variances: Bool
         Flag to return in- and out-of-transit variances (see below).
+    phantom_var: Integer or 1D integer iterable
+        Additional variance added in quadrature to noise components.
+        Set only if you know what you are doing.
 
     Returns
     -------
@@ -869,6 +881,9 @@ def simulate_spectrum(
     else:
         wl_model, depth = depth_model
 
+    if np.isscalar(phantom_var):
+        phantom_var = np.tile(phantom_var, 3)
+
     model = si.interp1d(
         wl_model, depth, kind='slinear',
         bounds_error=False, fill_value=np.nan,
@@ -923,7 +938,7 @@ def simulate_spectrum(
             transit_flux = None
             dt_in = total_time
 
-        # Temporary correction to binsize, needs to be tested for edge cases
+        # Binning correction due to readout mode
         rebin = 1
         if readout == 'faint':
             rebin = 2
@@ -936,7 +951,7 @@ def simulate_spectrum(
         half_width = var_data[1]
         flux = var_data[2]
         variance = np.sum(np.array(var_data[2:6]), axis=0)
-        variance += phantom_var*rebin
+        variance += phantom_var[j] * rebin
 
         if obs_type == 'stare':
             flux_out = None
@@ -945,7 +960,7 @@ def simulate_spectrum(
             # eclipse
             flux_out = var_data[6]
             var_out = np.sum(np.array(var_data[3:7]), axis=0)
-            var_out += phantom_var*rebin
+            var_out += phantom_var[j] * rebin
             if obs_type == 'transit':
                 flux, flux_out = flux_out, flux
                 variance, var_out = var_out, variance
