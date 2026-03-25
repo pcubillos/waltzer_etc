@@ -157,6 +157,7 @@ class Detector():
         self.pix_scale = det.getfloat('pix_scale')
         self.dark = det.getfloat('dark')
         self.read_noise = det.getfloat('read_noise')
+        self.systematic_noise = det.getfloat('systematic_noise')
         self.exp_time = det.getfloat('exp_time')
         self.aperture = det.getint('aperture')
         self.cross_dispersion = det.get('cross_dispersion')
@@ -260,9 +261,9 @@ class Detector():
         Returns
         -------
         bin_flux: 1D float array
-            Integrated photon flux per bin (photons s⁻¹).
+            Integrated photon flux per bin (photons s⁻¹ um⁻¹).
         bin_bkg: 1D float array
-            Integrated background photon flux per bin (photons s⁻¹ pixel⁻¹).
+            Integrated background photon flux per bin (photons s⁻¹ um⁻¹ pixel⁻¹).
 
         Examples
         --------
@@ -340,6 +341,7 @@ class Detector():
             'throughput': throughput,
             'dark': self.dark,
             'read_noise': self.read_noise,
+            'systematic_noise': self.systematic_noise,
             'det_type': self.type,
             'aperture': aperture,
             'cross_dispersion': self.cross_dispersion,
@@ -470,6 +472,8 @@ def calc_variances(
         Dark-current variance.
     var_read: 1D float array
         Read-noise variance.
+    var_systematics: 1D float array
+        Variance from all other systematic noises.
     var_transit: 1D float array
         Variance of transit_flux. Only returned when transit_flux is not None.
     """
@@ -553,6 +557,8 @@ def calc_variances(
         # Only two reads (instead of nsky) for the background:
         var_read = npix*(1+2*npix/nsky**2) * tso['read_noise'] * nreads
 
+    # Dark number of photons
+    var_systematic = rebin * npix*(1+npix/nsky) * tso['systematic_noise']
 
     if has_transit:
         var_transit = np.abs(bin_t_flux)
@@ -563,6 +569,7 @@ def calc_variances(
             var_background,
             var_dark,
             var_read,
+            var_systematic,
             var_transit,
         )
 
@@ -573,6 +580,7 @@ def calc_variances(
         var_background,
         var_dark,
         var_read,
+        var_systematic,
     )
 
 
@@ -950,7 +958,7 @@ def simulate_spectrum(
         wl = var_data[0]
         half_width = var_data[1]
         flux = var_data[2]
-        variance = np.sum(np.array(var_data[2:6]), axis=0)
+        variance = np.sum(np.array(var_data[2:7]), axis=0)
         variance += phantom_var[j] * rebin
 
         if obs_type == 'stare':
@@ -958,8 +966,8 @@ def simulate_spectrum(
             var_out = None
         else:
             # eclipse
-            flux_out = var_data[6]
-            var_out = np.sum(np.array(var_data[3:7]), axis=0)
+            flux_out = var_data[7]
+            var_out = np.sum(np.array(var_data[3:8]), axis=0)
             var_out += phantom_var[j] * rebin
             if obs_type == 'transit':
                 flux, flux_out = flux_out, flux
