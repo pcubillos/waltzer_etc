@@ -1434,7 +1434,7 @@ def server(input, output, session):
     programs_info = reactive.Value(None)
     clipboard = reactive.Value('')
     data_clipboard = reactive.Value(None)
-    phantom_variance = reactive.Value(0.0)
+    systematic_noise = reactive.Value(None)
     is_noiseless = reactive.Value(False)
 
     # Invisible flags
@@ -1467,9 +1467,9 @@ def server(input, output, session):
                     max=50.0,
                 ),
                 ui.input_numeric(
-                    id="phantom_variance",
-                    label="Phantom variance (e⁻ s⁻¹ pixel⁻¹)",
-                    value=0.0,
+                    id="systematic_noise",
+                    label="Systematic variance (e⁻ s⁻¹ pixel⁻¹)",
+                    value='None',
                     step=5.0,
                     min=0.0,
                     max=300.0,
@@ -1506,7 +1506,7 @@ def server(input, output, session):
             'display_tso_run',
             choices=make_tso_labels({}),
         )
-        phantom_variance.set(input.phantom_variance.get())
+        systematic_noise.set(input.systematic_noise.get())
         is_noiseless.set(input.noiseless.get()=='True')
         ui.modal_remove()
 
@@ -2660,8 +2660,10 @@ def server(input, output, session):
         plot_type = input.noise_plot.get()
         readout = input.readout.get()
         aperture = input.aperture.get()
+        system_var = systematic_noise.get()
         binsize = wl_binsize.get()
         wl_scale = input.noise_wl_scale.get()
+
         rebin = 1
         if readout == 'faint':
             rebin = 2
@@ -2671,7 +2673,9 @@ def server(input, output, session):
         if plot_type == 'variance':
             bands = tso['meta']['bands']
             var_data = [
-                waltz.calc_variances(tso[band], readout, aperture)
+                waltz.calc_variances(
+                    tso[band], readout, aperture, systematic_noise=system_var,
+                )
                 for band in bands
             ]
 
@@ -2692,7 +2696,6 @@ def server(input, output, session):
             transit_dur = input.t_dur.get()
             obs_dur = input.obs_dur.get()
             obs_geometry = input.obs_geometry.get()
-            phantom_var = phantom_variance.get()
 
             # Read model
             f_star = load_sed(input, spectra, cache_seds)
@@ -2706,7 +2709,7 @@ def server(input, output, session):
                 aperture=aperture,
                 efficiency=efficiency,
                 ret_variances=True,
-                phantom_var=phantom_var,
+                systematic_noise=system_var,
             )
 
             formatted_data = data_to_text(flux_data[1:], 'source_snr')
@@ -2747,7 +2750,7 @@ def server(input, output, session):
         n_obs = input.n_obs.get()
         readout = input.readout.get()
         aperture = input.aperture.get()
-        phantom_var = phantom_variance.get()
+        system_var = systematic_noise.get()
         noiseless = is_noiseless.get()
 
         obs_geometry = input.obs_geometry.get()
@@ -2775,7 +2778,7 @@ def server(input, output, session):
             readout=readout,
             aperture=aperture,
             efficiency=efficiency, noiseless=noiseless,
-            phantom_var=phantom_var,
+            systematic_noise=system_var,
         )
 
         formatted_data = data_to_text(tso_data[1:], 'tso')
