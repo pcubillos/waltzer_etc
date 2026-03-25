@@ -5,6 +5,8 @@ __all__ = [
     'ROOT',
     'to_mJy',
     'inst_convolution',
+    'SLIT_WIDTHS',
+    'SLIT_LENGTHS',
 ]
 
 import os
@@ -18,6 +20,34 @@ from scipy.signal.windows import gaussian
 
 ROOT = os.path.realpath(os.path.dirname(__file__)) + '/'
 
+
+# Slit widths in arcsec for each band/configuration
+SLIT_WIDTHS = {
+    'nuv': {
+        'wide': 60,
+        'medium': 20,
+        'narrow': 10,
+    },
+    'vis': {
+        'wide': 60,
+        'medium': 30,
+        'narrow': 15,
+    },
+}
+
+# Slit widths in arcsec for each band/configuration
+SLIT_LENGTHS = {
+    'nuv': {
+        'wide': 60,
+        'medium': 160,
+        'narrow': 10,
+    },
+    'vis': {
+        'wide': 60,
+        'medium': 155,
+        'narrow': 15,
+    },
+}
 
 def to_mJy(flux, wl, units):
     """
@@ -62,7 +92,7 @@ def to_mJy(flux, wl, units):
     return flux * u
 
 
-def inst_convolution(wl, spectrum, resolution, sampling_res=None, mode='same'):
+def inst_convolution(wl, spectrum, resolution, sampling_res=None):
     """
     Convolve a spectrum according to an instrumental resolving power
 
@@ -77,34 +107,6 @@ def inst_convolution(wl, spectrum, resolution, sampling_res=None, mode='same'):
         Where delta_lambda is the FHWM of the gaussian to be applied.
     sampling_red: float
         Sampling resolution of the input wl spectrum.
-
-    Examples
-    --------
-    >>> import pyratbay.spectrum as ps
-    >>> import numpy as np
-    >>> import matplotlib.pyplot as plt
-
-    >>> wl_min = 1.499
-    >>> wl_max = 1.501
-    >>> samp_resolution = 100_000
-    >>> wl = ps.constant_resolution_spectrum(wl_min, wl_max, samp_resolution)
-    >>> nwave = len(wl)
-
-    >>> # A delta at wl0 ~ 1.5
-    >>> spectrum = np.zeros(nwave)
-    >>> spectrum[np.where(wl>1.5)[0][0]] = 1.0
-    >>> wl0 = wl[np.where(wl>1.5)[0][0]]
-
-    >>> resolution = 5_000
-    >>> conv = ps.inst_convolution(wl, spectrum, resolution)
-
-    >>> # Plot convolved line and expected FWHM
-    >>> half_max = np.amax(conv)/2
-    >>> hwhm = 0.5 * wl0 / resolution
-    >>> plt.figure(0)
-    >>> plt.clf()
-    >>> plt.plot(wl, conv, color='salmon', lw=2)
-    >>> plt.plot([wl0-hwhm, wl0+hwhm], [half_max,half_max], color='xkcd:blue', lw=2)
     """
     pixel_dv = pc.c / resolution / 1e5
     n_el = int(6*pixel_dv) + 1
@@ -124,7 +126,13 @@ def inst_convolution(wl, spectrum, resolution, sampling_res=None, mode='same'):
     csscaled = si.splrep(rv_array, kernel)
     ker_conv_pix = si.splev(rv_array_mod, csscaled, der=0)
     ker_conv_pix /= sum(ker_conv_pix)
-    rconv = convolve(spectrum, ker_conv_pix, mode=mode)
+    margin = (ker_conv_pix.size-1) // 2
+    wide_spectrum = np.concatenate((
+        np.tile(spectrum[0], margin),
+        spectrum,
+        np.tile(spectrum[-1], margin),
+    ))
+    rconv = convolve(wide_spectrum, ker_conv_pix, mode='valid')
     return rconv
 
 
