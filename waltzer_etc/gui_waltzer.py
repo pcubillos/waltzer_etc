@@ -157,11 +157,8 @@ def waltz_model(wl_model, depth):
     )
     waltzer_depth = inst_convolution(
         wl, interp_depth(wl), inst_resolution, sampling_res=resolution,
-        mode='valid',
     )
-    edge = (wl.size - waltzer_depth.size) // 2
-    waltzer_wl = wl[edge:-edge]
-    return waltzer_wl, waltzer_depth
+    return wl, waltzer_depth
 
 
 def load_sed(input, spectra, cache_seds):

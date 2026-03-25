@@ -353,15 +353,15 @@ def plotly_variances(
         layout={'colorway': COLOR_SEQUENCE},
     )
 
-    labels = ['source', 'sky', 'dark', 'read noise']
-    colors = [blue,'tomato', green, 'black']
+    labels = ['source', 'sky', 'dark', 'read noise', 'systematic noise']
+    colors = [blue,'tomato', green, 'black', 'orange']
 
     wl_min = 2.0
     wl_max = 0.0
     for j,band in enumerate(bands):
         wl = np.array(var_data[j][0])
         half_width = np.array(var_data[j][1])
-        variances = var_data[j][2:6]
+        variances = var_data[j][2:7]
 
         show_legend = True if j==0 else False
         wl_min = np.amin([wl_min, 0.95*np.amin(wl-half_width)])
