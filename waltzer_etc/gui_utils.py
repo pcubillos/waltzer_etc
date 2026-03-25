@@ -37,13 +37,14 @@ def data_to_text(data, data_type):
         ]).T
 
         text = (
-            '# wl(um)  half_width(um)  source(e-/s)       sky(e-/s)      '
-            'dark(e-/s)  read_noise(e-/s)\n'
+            '# wl(um)  half_width(um)  source(e-/s)  sky(e-/s)       '
+            'dark(e-/s)    read_noise(e-/s)  systematics(e-/s)\n'
         )
         for row in data:
             text += (
                 f'{row[0]:.7f}  {row[1]:.7f}    '
-                f'{row[2]:.8e}  {row[3]:.8e}  {row[4]:.8e}  {row[5]:.8e}\n'
+                f'{row[2]:.8e}  {row[3]:.8e}  {row[4]:.8e}  '
+                f'{row[5]:.8e}  {row[6]:.8e}\n'
             )
     if data_type == 'source_snr':
         data = np.vstack([
