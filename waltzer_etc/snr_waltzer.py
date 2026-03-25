@@ -435,7 +435,7 @@ class Detector():
 
 def calc_variances(
         tso, readout='full_frame', aperture='medium',
-        transit_flux=None, exp_time=300.0,
+        transit_flux=None, exp_time=300.0, systematic_noise=None,
     ):
     """
     Compute the electrons per second signal of the source,
@@ -457,6 +457,8 @@ def calc_variances(
         Must be sampled at tso['hires_wl']
     exp_time: Float
         Exposure time (s).
+    systematic_noise: Float
+        If not None, overwrite the default systematic noise in e s⁻¹ pix⁻¹.
 
     Returns
     -------
@@ -558,7 +560,10 @@ def calc_variances(
         var_read = npix*(1+2*npix/nsky**2) * tso['read_noise'] * nreads
 
     # Dark number of photons
-    var_systematic = rebin * npix*(1+npix/nsky) * tso['systematic_noise']
+    if systematic_noise is None:
+        systematic_noise = tso['systematic_noise']
+
+    var_systematic = rebin * npix*(1+npix/nsky) * systematic_noise
 
     if has_transit:
         var_transit = np.abs(bin_t_flux)
@@ -717,7 +722,7 @@ def simulate_spectrum(
         binsize=None, resolution=None, noiseless=False,
         readout='full_frame', aperture='medium', efficiency=None,
         ret_variances=False,
-        phantom_var=0.0,
+        systematic_noise=None,
     ):
     """
     Simulate a WALTzER TSO observation, that is, a transit or eclipse
@@ -764,8 +769,8 @@ def simulate_spectrum(
         WALTzER duty cycle efficiency. If None, take value from tso.
     ret_variances: Bool
         Flag to return in- and out-of-transit variances (see below).
-    phantom_var: Integer or 1D integer iterable
-        Additional variance added in quadrature to noise components.
+    systematic_noise: Float or 1D float iterable
+        Systematic variance added in quadrature to noise components.
         Set only if you know what you are doing.
 
     Returns
@@ -889,8 +894,11 @@ def simulate_spectrum(
     else:
         wl_model, depth = depth_model
 
-    if np.isscalar(phantom_var):
-        phantom_var = np.tile(phantom_var, 3)
+    bands = tso['meta']['bands']
+    if systematic_noise is None:
+        systematic_noise = [None, None, None]
+    elif np.isscalar(systematic_noise):
+        systematic_noise = [systematic_noise for _ in bands]
 
     model = si.interp1d(
         wl_model, depth, kind='slinear',
@@ -907,7 +915,6 @@ def simulate_spectrum(
     if obs_dur is None:
         obs_dur = transit_dur + 2.0*np.amax([1.5*transit_dur, 1.0])
 
-    bands = tso['meta']['bands']
     if np.isscalar(binsize) or binsize is None:
         binsize = np.tile(binsize, len(bands))
     elif len(binsize) != len(bands):
@@ -954,12 +961,14 @@ def simulate_spectrum(
             rebin = 4
 
         # Data at WALTzER sampling and resolving power
-        var_data = calc_variances(det, readout, aperture, transit_flux)
+        var_data = calc_variances(
+            det, readout, aperture, transit_flux,
+            systematic_noise=systematic_noise[j],
+        )
         wl = var_data[0]
         half_width = var_data[1]
         flux = var_data[2]
         variance = np.sum(np.array(var_data[2:7]), axis=0)
-        variance += phantom_var[j] * rebin
 
         if obs_type == 'stare':
             flux_out = None
@@ -968,7 +977,6 @@ def simulate_spectrum(
             # eclipse
             flux_out = var_data[7]
             var_out = np.sum(np.array(var_data[3:8]), axis=0)
-            var_out += phantom_var[j] * rebin
             if obs_type == 'transit':
                 flux, flux_out = flux_out, flux
                 variance, var_out = var_out, variance
