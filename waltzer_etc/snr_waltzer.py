@@ -563,7 +563,7 @@ def calc_variances(
     if systematic_noise is None:
         systematic_noise = tso['systematic_noise']
 
-    var_systematic = rebin * npix*(1+npix/nsky) * systematic_noise
+    var_systematic = rebin * npix*(1+npix/nsky) * systematic_noise * nreads
 
     if has_transit:
         var_transit = np.abs(bin_t_flux)
