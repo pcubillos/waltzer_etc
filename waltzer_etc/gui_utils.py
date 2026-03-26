@@ -25,6 +25,61 @@ from waltzer_etc.utils import ROOT
 from waltzer_etc.target import Target
 
 
+def data_to_text(data, data_type):
+    """
+    Format WALTzER simulated data outputs (fluxes, variances, and depths)
+    to nice-looking text.
+    """
+    if data_type == 'source_variances':
+        data = np.hstack([
+            np.array(v_data)
+            for v_data in data
+        ]).T
+
+        text = (
+            '# wl(um)  half_width(um)  source(e-/s)  sky(e-/s)       '
+            'dark(e-/s)    read_noise(e-/s)  systematics(e-/s)\n'
+        )
+        for row in data:
+            text += (
+                f'{row[0]:.7f}  {row[1]:.7f}    '
+                f'{row[2]:.8e}  {row[3]:.8e}  {row[4]:.8e}  '
+                f'{row[5]:.8e}  {row[6]:.8e}\n'
+            )
+    if data_type == 'source_snr':
+        data = np.vstack([
+            np.hstack([d for d in f_data])
+            for f_data in data
+        ]).T
+        text = (
+            '# wl(um)  half_width(um)  flux_in(e-)    flux_out(e-)      '
+            'var_in(e-)     var_out(e-)\n'
+        )
+        for row in data:
+            text += (
+                f'{row[0]:.7f}  {row[5]:.7f}   '
+                f'{row[1]:.8e}  {row[2]:.8e}  '
+                f'{row[3]:.8e}  {row[4]:.8e}\n'
+            )
+
+    if data_type == 'tso':
+        data = np.vstack([
+            np.hstack([d for d in t_data])
+            for t_data in data
+        ]).T
+        text = '# wl(um)  half_width(um)  depth(%)        depth_error(%)\n'
+        for row in data:
+            text += (
+                f'{row[0]:.7f}   {row[3]:.7f}   '
+                f'{row[1]/pc.percent:16.8e}  {row[2]/pc.percent:.8e}\n'
+            )
+
+    if data_type == 'tso_uncert':
+        pass
+
+    return text
+
+
 def make_sed_catalog():
     sed_dict = {}
     sed_labels = {}
@@ -268,10 +323,15 @@ def read_spectrum_file(file, units='none', wl_units='micron', on_fail=None):
         "f_lambda",
         "mJy",
     ]
-    if units not in depth_units and units not in sed_units:
+    extended_units = [
+        "mJy_arcsec2",
+    ]
+    all_units = depth_units + sed_units + extended_units
+    if units not in all_units:
         msg = (
             f"The input units ({repr(units)}) must be one of {depth_units} "
-            f"for depths or one of {sed_units} for SEDs"
+            f"for depths, one of {sed_units} for SEDs, or one of "
+            f"{extended_units} for extended sources"
         )
         raise ValueError(msg)
 
@@ -288,13 +348,15 @@ def read_spectrum_file(file, units='none', wl_units='micron', on_fail=None):
             raise ValueError(error_msg)
         return None, None, None
 
-    # Set the units:
+    # Set the wavelength units:
     if wl_units == 'angstrom':
         wl *= pc.A / pc.um
 
     # Set the units:
     if units in depth_units:
         u = pt.u(units)
+    elif units in extended_units:
+        u = 1.0
     else:
         if units == 'f_freq':
             u = 10**26

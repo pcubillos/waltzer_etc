@@ -22,6 +22,7 @@ import pyratbay.spectrum as ps
 
 from waltzer_etc.utils import ROOT, inst_convolution
 from waltzer_etc.__main__ import parse_args
+from waltzer_etc import __version__ as waltzer_version
 import waltzer_etc as waltz
 import waltzer_etc.sed as sed
 from gui_utils import (
@@ -37,6 +38,7 @@ from gui_utils import (
     read_spectrum_file,
     pretty_print_target,
     as_str,
+    data_to_text,
     esasky_js_circle,
     esasky_js_catalog,
     custom_card,
@@ -46,22 +48,39 @@ from gui_utils import (
 import gui_plotly as plt
 
 
-def searchsorted_closest(array, val):
+def searchsorted_closest(array, val, readout='full_frame'):
     """
     Find index closest to val in a sorted array
-    """
-    if val <= array[0]:
-        return 0
-    if val >= array[-1]:
-        return len(array) - 1
 
-    idx = np.searchsorted(array[:-1], val)
-    d_lo = val - array[idx-1]
-    d_hi = array[idx] - val
+    Examples
+    --------
+    >>> bins = np.arange(6000, 0, -1)
+    >>> resolutions = 6000.0 / bins
+    >>> res = 0.0
+    >>> for readout in ['full_frame', 'bright', 'faint', 'ultra_faint']:
+    >>>     idx = searchsorted_closest(resolutions, res, readout)
+    >>>     print(f"{idx:4d}  {resolutions[idx]:6.1f}  {bins[idx]:4d}")
+    """
+    rebin = 1
+    if readout == 'faint':
+        rebin = 2
+    elif readout == 'ultra_faint':
+        rebin = 4
+
+    samples = array[::rebin]
+
+    if val <= samples[0]:
+        return 0
+    if val >= samples[-1]:
+        return (len(samples) - 1) * rebin
+
+    idx = np.searchsorted(samples[:-1], val)
+    d_lo = val - samples[idx-1]
+    d_hi = samples[idx] - val
 
     if d_lo < d_hi:
-        return idx -1
-    return idx
+        return (idx - 1) * rebin
+    return idx*rebin
 
 
 def masked_throughput(masks):
@@ -95,6 +114,10 @@ bands = ['nuv', 'vis', 'nir']
 detectors = {
     band: waltz.Detector(band, diameter=primary_diameter)
     for band in bands
+}
+systematic_vars = {
+    band: det.systematic_noise
+    for band,det in detectors.items()
 }
 
 band_wl, band_response, band_mask = get_throughput()
@@ -138,11 +161,8 @@ def waltz_model(wl_model, depth):
     )
     waltzer_depth = inst_convolution(
         wl, interp_depth(wl), inst_resolution, sampling_res=resolution,
-        mode='valid',
     )
-    edge = (wl.size - waltzer_depth.size) // 2
-    waltzer_wl = wl[edge:-edge]
-    return waltzer_wl, waltzer_depth
+    return wl, waltzer_depth
 
 
 def load_sed(input, spectra, cache_seds):
@@ -225,20 +245,21 @@ def make_tso_labels(tso_runs):
     return tso_labels
 
 
-cache_target = {}
+# TBD delete these
 cache_acquisition = {}
-cache_saturation = {}
 
 # Planet and stellar spectra
 spectra = {
     'transit': {},
     'eclipse': {},
     'sed': {},
+    'extended': {},
 }
 bookmarked_spectra = {
     'transit': [],
     'eclipse': [],
     'sed': [],
+    'extended': [],
 }
 
 # Load spectra from user-defined folder and/or from default folder
@@ -276,6 +297,10 @@ sed_units = {
     "mJy": "mJy",
 }
 
+extended_units = {
+    "mJy_arcsec2": 'mJy arcsec\u207b\u00b2',
+}
+
 layout_kwargs = dict(
     width=1/2,
     fixed_width=False,
@@ -285,6 +310,7 @@ layout_kwargs = dict(
     fillable=True,
     class_="pb-2 pt-0 m-0",
 )
+
 
 welcome = """\
 To update:
@@ -405,7 +431,17 @@ app_ui = ui.page_fluid(
             ui.card_header("Target", class_="bg-primary"),
             ui.card(
                 ui.card_body(
-                    # a hidden section to hold switches for other conditionals
+                    ui.markdown('**Source type**'),
+                    ui.input_select(
+                        id="source_type",
+                        label='',
+                        choices={
+                            'point': 'Point Source',
+                            #'extended': 'Extended Source',
+                        },
+                        selected='point',
+                    ),
+                    # Hidden section to hold switches for conditionals
                     ui.panel_conditional(
                         'false',
                         ui.input_action_button(
@@ -428,154 +464,264 @@ app_ui = ui.page_fluid(
                             value=False,
                         ),
                     ),
-                    ui.popover(
+                    class_="px-2 py-1 pb-2 m-0 gap-2",
+                    style=card_style,
+                    fill=False,
+                ),
+                fill=False,
+            ),
+            # Extended source target
+            ui.panel_conditional(
+                "input.source_type === 'extended'",
+                ui.card(
+                    ui.card_body(
                         ui.span(
-                            fa.icon_svg("gear"),
-                            style="position:absolute; top: 5px; right: 7px;",
-                        ),
-                        ui.input_checkbox_group(
-                            id="target_filter",
-                            label='',
-                            choices={
-                                "transit": "transiting",
-                                "jwst": "JWST targets",
-                                "tess": "TESS candidates",
-                                "non_transit": "non-transiting",
-                            },
-                            selected=['jwst', 'transit'],
-                        ),
-                        title='Filter targets',
-                        placement="right",
-                        id="targets_popover",
-                    ),
-                    ui.span(
-                        ui.HTML('<b>Target</b> '),
-                        ui.tooltip(
-                            ui.input_action_link(
-                                id='show_info',
-                                label='',
-                                icon=fa.icon_svg("circle-info", fill='cornflowerblue'),
-                            ),
-                            'System info',
-                            id='target_info_tooltip',
-                            placement='top',
-                        ),
-                        #url has to be set with javascript, output_ui does not render nicely, ui.input_action_link() does not open in server side.
-                        ui.tooltip(
-                            ui.tags.a(
-                                fa.icon_svg("circle-info", fill='black'),
-                                id='nasa_link',
-                                href=f'{nasa_url}',
-                                target="_blank",
-                            ),
-                            "Open target's NASA Exoplanet Archive",
-                            id='nasa_tooltip',
-                            placement='top',
-                        ),
-                        ui.tooltip(
-                            ui.input_action_link(
-                                id='show_observations',
-                                label='',
-                                icon=fa.icon_svg("circle-info", fill='gray'),
-                            ),
-                            'not a JWST target (yet)',
-                            id='jwst_tooltip',
-                            placement='top',
-                        ),
-                        ui.panel_conditional(
-                            "input.is_candidate",
-                            ui.tooltip(
-                                fa.icon_svg("triangle-exclamation", fill='darkorange'),
-                                ui.markdown("This is a *candidate* planet"),
-                                placement='top',
-                            ),
-                        ),
-                    ),
-                    ui.input_selectize(
-                        id='target',
-                        label='',
-                        choices=[target.planet for target in catalog.targets],
-                        selected='HD 209458 b',
-                        multiple=False,
-                    ),
-                    # SED properties
-                    ui.layout_column_wrap(
-                        # Row 1
-                        ui.HTML("<p>T<sub>eff</sub> (K):</p>"),
-                        ui.input_numeric("t_eff", "", value='1400.0'),
-                        # Row 2
-                        ui.p("log(g):"),
-                        ui.input_numeric("log_g", "", value='4.5'),
-                        # Row 3
-                        ui.p("V magnitude:"),
-                        ui.input_numeric(
-                            id="magnitude",
-                            label="",
-                            value='10.0',
-                        ),
-                        width=1/2,
-                        fixed_width=False,
-                        heights_equal='all',
-                        gap='7px',
-                        fill=False,
-                        fillable=True,
-                    ),
-                    ui.span(
-                        ui.HTML('<b>Stellar SED</b> '),
-                        # upload (hidden for now)
-                        ui.tooltip(
-                            ui.input_action_link(
-                                id='upload_sed',
-                                label='',
-                                icon=fa.icon_svg("file-arrow-up", fill='black'),
-                            ),
-                            'Upload SED',
-                            id='sed_up_tooltip',
-                            placement='top',
-                        ),
-                        # bookmarks
-                        ui.tooltip(
-                            ui.input_action_link(
-                                id='bookmark_sed',
-                                label='',
-                                icon=fa.icon_svg("star", style='regular', fill='black'),
-                            ),
-                            'Bookmark SED',
-                            id='sed_book_tooltip',
-                            placement='top',
-                        ),
-                        # clear
-                        ui.panel_conditional(
-                            "input.has_sed_bookmarks",
+                            ui.HTML('<b>Extended sources</b> '),
                             ui.tooltip(
                                 ui.input_action_link(
-                                    id='clear_sed_bookmarks',
+                                    id='upload_extended',
                                     label='',
-                                    icon=fa.icon_svg("circle-xmark", style='regular', fill='black'),
+                                    icon=fa.icon_svg("file-arrow-up", fill='black'),
                                 ),
-                                'Clear all SED bookmarks',
-                                id='sed_clear_tooltip',
+                                'Upload spectrum',
+                                id='extended_up_tooltip',
                                 placement='top',
                             ),
+                            # bookmarks
+                            ui.tooltip(
+                                ui.input_action_link(
+                                    id='bookmark_extended',
+                                    label='',
+                                    icon=fa.icon_svg("meteor", style='solid', fill='gray'),
+                                ),
+                                'Bookmark spectrum',
+                                id='extended_book_tooltip',
+                                placement='top',
+                            ),
+                            # clear
+                            ui.panel_conditional(
+                                "input.has_extended_bookmarks",
+                                ui.tooltip(
+                                    ui.input_action_link(
+                                        id='clear_extended_bookmarks',
+                                        label='',
+                                        icon=fa.icon_svg("circle-xmark", style='regular', fill='black'),
+                                    ),
+                                    'Clear all bookmarks',
+                                    id='extended_clear_tooltip',
+                                    placement='top',
+                                ),
+                            ),
                         ),
-                    ),
-                    ui.input_select(
-                        id="sed_type",
-                        label='',
-                        choices=sed_choices,
-                        selected=list(sed_choices)[0],
-                    ),
-                    ui.input_select(
-                        id="sed",
-                        label="",
-                        choices=sed_dict[list(sed_choices)[0]],
+                        ui.tooltip(
+                            ui.input_select(
+                                id="extended_source",
+                                label="",
+                                choices=list(spectra['extended']),
+                            ),
+                            'Upload a source spectrum',
+                            id='extended_tooltip',
+                            placement='right',
+                        ),
+                        # Source properties
+                        ui.layout_column_wrap(
+                            # Row 1
+                            ui.HTML("Shape:"),
+                            ui.input_select(
+                                id="extended_type",
+                                label='',
+                                choices={
+                                    'flat': 'Flat',
+                                    'power_law': 'Power Law',
+                                }
+                            ),
+                            # Row 2
+                            ui.p('Radius (arcsec):'),
+                            ui.input_numeric("source_radius", "", value=3.0),
+                            # Row 3
+                            ui.p("Pow law index:"),
+                            ui.input_numeric(
+                                id="pow_law_index",
+                                label="",
+                                value=0.1,
+                            ),
+                            width=1/2,
+                            fixed_width=False,
+                            heights_equal='all',
+                            gap='7px',
+                            fill=False,
+                            fillable=True,
+                        ),
+                        "X,Y offset (arcsec):",
+                        ui.layout_column_wrap(
+                            ui.input_numeric("x_offset", "", value=0.0),
+                            ui.input_numeric("y_offset", "", value=0.0),
+                            width=1/2,
+                            fixed_width=False,
+                            heights_equal='all',
+                            gap='7px',
+                            fill=False,
+                            fillable=True,
+                        ),
+                        class_="px-2 py-1 pb-2 m-0 gap-2",
+                        style=card_style,
+                        fill=False,
                     ),
                     fill=False,
-                    style=card_style,
-                    class_="px-2 pt-2 pb-0 m-0 gap-2",
                 ),
-                class_="p-0 pb-1 m-0",
-                fill=False,
+            ),
+            # Point source target
+            ui.panel_conditional(
+                "input.source_type === 'point'",
+                ui.card(
+                    ui.card_body(
+                        ui.popover(
+                            ui.span(
+                                fa.icon_svg("gear"),
+                                style="position:absolute; top: 5px; right: 7px;",
+                            ),
+                            ui.input_checkbox_group(
+                                id="target_filter",
+                                label='',
+                                choices={
+                                    "transit": "transiting",
+                                    "jwst": "JWST targets",
+                                    "tess": "TESS candidates",
+                                    "non_transit": "non-transiting",
+                                },
+                                selected=['jwst', 'transit'],
+                            ),
+                            title='Filter targets',
+                            placement="right",
+                            id="targets_popover",
+                        ),
+                        ui.span(
+                            ui.HTML('<b>Target</b> '),
+                            ui.tooltip(
+                                ui.input_action_link(
+                                    id='show_info',
+                                    label='',
+                                    icon=fa.icon_svg("circle-info", fill='cornflowerblue'),
+                                ),
+                                'System info',
+                                id='target_info_tooltip',
+                                placement='top',
+                            ),
+                            #url has to be set with javascript, output_ui does not render nicely, ui.input_action_link() does not open in server side.
+                            ui.tooltip(
+                                ui.tags.a(
+                                    fa.icon_svg("circle-info", fill='black'),
+                                    id='nasa_link',
+                                    href=f'{nasa_url}',
+                                    target="_blank",
+                                ),
+                                "Open target's NASA Exoplanet Archive",
+                                id='nasa_tooltip',
+                                placement='top',
+                            ),
+                            ui.tooltip(
+                                ui.input_action_link(
+                                    id='show_observations',
+                                    label='',
+                                    icon=fa.icon_svg("circle-info", fill='gray'),
+                                ),
+                                'not a JWST target (yet)',
+                                id='jwst_tooltip',
+                                placement='top',
+                            ),
+                            ui.panel_conditional(
+                                "input.is_candidate",
+                                ui.tooltip(
+                                    fa.icon_svg("triangle-exclamation", fill='darkorange'),
+                                    ui.markdown("This is a *candidate* planet"),
+                                    placement='top',
+                                ),
+                            ),
+                        ),
+                        ui.input_selectize(
+                            id='target',
+                            label='',
+                            choices=[target.planet for target in catalog.targets],
+                            selected='HD 209458 b',
+                            multiple=False,
+                        ),
+                        # SED properties
+                        ui.layout_column_wrap(
+                            # Row 1
+                            ui.HTML("<p>T<sub>eff</sub> (K):</p>"),
+                            ui.input_numeric("t_eff", "", value='1400.0'),
+                            # Row 2
+                            ui.p("log(g):"),
+                            ui.input_numeric("log_g", "", value='4.5'),
+                            # Row 3
+                            ui.p("V magnitude:"),
+                            ui.input_numeric(
+                                id="magnitude",
+                                label="",
+                                value='10.0',
+                            ),
+                            width=1/2,
+                            fixed_width=False,
+                            heights_equal='all',
+                            gap='7px',
+                            fill=False,
+                            fillable=True,
+                        ),
+                        ui.span(
+                            ui.HTML('<b>Stellar SED</b> '),
+                            ui.tooltip(
+                                ui.input_action_link(
+                                    id='upload_sed',
+                                    label='',
+                                    icon=fa.icon_svg("file-arrow-up", fill='black'),
+                                ),
+                                'Upload SED',
+                                id='sed_up_tooltip',
+                                placement='top',
+                            ),
+                            # bookmarks
+                            ui.tooltip(
+                                ui.input_action_link(
+                                    id='bookmark_sed',
+                                    label='',
+                                    icon=fa.icon_svg("star", style='regular', fill='black'),
+                                ),
+                                'Bookmark SED',
+                                id='sed_book_tooltip',
+                                placement='top',
+                            ),
+                            # clear
+                            ui.panel_conditional(
+                                "input.has_sed_bookmarks",
+                                ui.tooltip(
+                                    ui.input_action_link(
+                                        id='clear_sed_bookmarks',
+                                        label='',
+                                        icon=fa.icon_svg("circle-xmark", style='regular', fill='black'),
+                                    ),
+                                    'Clear all SED bookmarks',
+                                    id='sed_clear_tooltip',
+                                    placement='top',
+                                ),
+                            ),
+                        ),
+                        ui.input_select(
+                            id="sed_type",
+                            label='',
+                            choices=sed_choices,
+                            selected=list(sed_choices)[0],
+                        ),
+                        ui.input_select(
+                            id="sed",
+                            label="",
+                            choices=sed_dict[list(sed_choices)[0]],
+                        ),
+                        class_="px-2 py-1 pb-2 m-0 gap-2",
+                        style=card_style,
+                        fill=False,
+                    ),
+                    fill=False,
+                ),
             ),
             # The planet
             ui.card(
@@ -734,14 +880,14 @@ app_ui = ui.page_fluid(
                             **layout_kwargs,
                         ),
                     ),
-                    fill=False,
+                    class_="px-2 py-1 pb-0 m-0 gap-2",
                     style=card_style,
-                    class_="px-2 pt-2 pb-0 m-0 gap-2",
+                    fill=False,
                 ),
                 class_="p-0 m-0",
                 fill=False,
             ),
-            body_args=dict(class_="p-2 m-0"),
+            body_args=dict(class_="p-2 m-0 gap-3"),
         ),
 
         # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
@@ -764,31 +910,57 @@ app_ui = ui.page_fluid(
                         },
                         selected=['nuv', 'vis', 'nir'],
                     ),
-                    ui.input_numeric(
-                        id="efficiency",
-                        label="Efficiency (%)",
-                        value=60.0,
-                        min=0.0,
-                        max=100.0,
-                        step=0.5,
+                    ui.layout_column_wrap(
+                        "Efficiency (%):",
+                        ui.input_numeric(
+                            id="efficiency",
+                            label="",
+                            value=60.0,
+                            min=0.0,
+                            max=100.0,
+                            step=1.0,
+                        ),
+                        'Readout mode:',
+                        ui.input_select(
+                            id='readout',
+                            label='',
+                            choices={
+                                'full_frame': 'Full frame',
+                                'bright': 'Bright',
+                                'faint': 'Faint',
+                                'ultra_faint': 'Ultra faint',
+                            }
+                        ),
+                        ui.tooltip(
+                            'Aperture:',
+                            'NUV and VIS',
+                            id='aper_tooltip',
+                            placement='bottom',
+                        ),
+                        ui.input_select(
+                            id='aperture',
+                            label='',
+                            choices={
+                                'narrow': 'Narrow (10"/15")',
+                                'medium': 'Medium (20"/30")',
+                                'wide': 'Wide (60"/60")',
+                            }
+                        ),
+                        class_="p-0 m-0",
+                        width=1/2,
+                        fixed_width=False,
+                        heights_equal='all',
+                        gap='7px',
+                        fill=False,
+                        fillable=True,
                     ),
                     ui.input_numeric(
                         id="n_obs",
-                        label="Number of observations",
+                        label="Number of observations:",
                         value=3,
                         min=1,
                         max=50,
                         step=1,
-                    ),
-                    ui.input_select(
-                        id='readout',
-                        label='Readout mode',
-                        choices={
-                            'full_frame': 'Full frame',
-                            #'bright': 'Bright',
-                            #'faint': 'Faint',
-                            #'ultra_faint': 'Ultra faint',
-                        }
                     ),
                     style=card_style,
                     class_="px-2 pt-1 pb-2 m-0 gap-3",
@@ -1223,7 +1395,7 @@ app_ui = ui.page_fluid(
                     "Results",
                     ui.span(
                         ui.output_ui(id="results"),
-                        style="font-family: monospace; font-size:medium;",
+                        style="font-family: monospace; font-size:medium; max-height:30em;",
                     ),
                 ),
                 ui.nav_panel(
@@ -1256,6 +1428,7 @@ def server(input, output, session):
     update_catalog_flag = reactive.Value(False)
     update_sed_flag = reactive.Value(None)
     update_depth_flag = reactive.Value(None)
+    update_extended_flag = reactive.Value(None)
     uploaded_units = reactive.Value(None)
     acq_target_list = reactive.Value(None)
     current_acq_science_target = reactive.Value(None)
@@ -1265,6 +1438,8 @@ def server(input, output, session):
     programs_info = reactive.Value(None)
     clipboard = reactive.Value('')
     data_clipboard = reactive.Value(None)
+    systematic_noise = reactive.Value(systematic_vars)
+    is_noiseless = reactive.Value(False)
 
     # Invisible flags
     @reactive.effect
@@ -1295,6 +1470,42 @@ def server(input, output, session):
                     min=30.0,
                     max=50.0,
                 ),
+                'Systematic variances [NUV, VIS, NIR] (e⁻ read⁻¹ pixel⁻¹)',
+                ui.layout_column_wrap(
+                    ui.input_numeric(
+                        id="nuv_sys_noise",
+                        label="",
+                        value=systematic_vars['nuv'],
+                        step=0.5,
+                        min=0.0,
+                    ),
+                    ui.input_numeric(
+                        id="vis_sys_noise",
+                        label="",
+                        value=systematic_vars['vis'],
+                        step=0.5,
+                        min=0.0,
+                    ),
+                    ui.input_numeric(
+                        id="nir_sys_noise",
+                        label="",
+                        value=systematic_vars['nir'],
+                        step=100.0,
+                        min=0.0,
+                    ),
+                    width=1/3,
+                    fixed_width=False,
+                    heights_equal='all',
+                    gap='7px',
+                    fill=False,
+                    fillable=True,
+                ),
+                ui.input_select(
+                    id="noiseless",
+                    label='Noiseless TSO simulation:',
+                    choices=['True', 'False'],
+                    selected='False',
+                ),
                 ui.input_action_button(
                     id="set_mirror_size",
                     label="Update",
@@ -1321,6 +1532,12 @@ def server(input, output, session):
             'display_tso_run',
             choices=make_tso_labels({}),
         )
+        systematic_noise.set({
+            'nuv': input.nuv_sys_noise.get(),
+            'vis': input.vis_sys_noise.get(),
+            'nir': input.nir_sys_noise.get(),
+        })
+        is_noiseless.set(input.noiseless.get()=='True')
         ui.modal_remove()
 
 
@@ -1364,115 +1581,6 @@ def server(input, output, session):
         ui.modal_show(m)
 
 
-    @reactive.effect
-    @reactive.event(input.display_tso_run)
-    def update_full_state():
-        """
-        When a user chooses a run from display_tso_run, update the entire
-        front end to match the run setup.
-        """
-        pass
-        #tso_key = input.display_tso_run.get()
-        #if tso_key is None:
-        #    return
-        #key, tso_label = tso_key.split('_', maxsplit=1)
-        #tso = tso_runs[key][tso_label]
-
-        #detector = get_detector(inst, mode, detectors)
-
-        ## The instrumental setting
-        #choices = detector.get_constrained_val('filters')
-        #ui.update_select(
-        #    'filter',
-        #    label=detector.filter_label,
-        #    choices=choices,
-        #    selected=filter,
-        #)
-
-        ## The target:
-        #current_target = input.target.get()
-        #current_tdur = _safe_num(input.t_dur.get(), default=2.0, cast=float)
-
-        #name = tso['target']
-        #t_dur = float(tso['transit_dur'])
-        #planet_model_type = tso['planet_model_type']
-        #ui.update_selectize('target', selected=name)
-        #norm_band = tso['norm_band']
-        #norm_mag = str(tso['norm_mag'])
-        #sed_type = tso['sed_type']
-
-        #if name != current_target:
-        #    if name not in cache_target:
-        #        cache_target[name] = {}
-        #    cache_target[name]['t_eff'] = tso['t_eff']
-        #    cache_target[name]['log_g'] = tso['log_g']
-        #    cache_target[name]['t_dur'] = t_dur
-        #    cache_target[name]['depth_label'] = tso['depth_label']
-        #    cache_target[name]['rprs_sq'] = tso['rprs_sq']
-        #    cache_target[name]['teq_planet'] = tso['teq_planet']
-        #    cache_target[name]['norm_band'] = norm_band
-        #    cache_target[name]['norm_mag'] = norm_mag
-        #else:
-        #    ui.update_numeric('t_eff', value=float(tso['t_eff']))
-        #    ui.update_numeric('log_g', value=float(tso['log_g']))
-        #    ui.update_numeric('t_dur', value=float(t_dur))
-        #    ui.update_numeric('magnitude', value=float(norm_mag))
-
-        ## sed_type, sed_model, norm_band, norm_mag, sed_label
-        #ui.update_select('sed_type', selected=sed_type)
-        #reset_sed = (
-        #    sed_type != input.sed_type.get()
-        #    or float(tso['t_eff']) != _safe_num(input.t_eff.get(), default=float(tso['t_eff']), cast=float)
-        #    or float(tso['log_g']) != _safe_num(input.log_g.get(), default=float(tso['log_g']), cast=float)
-        #)
-        #if sed_type in sed_dict:
-        #    if reset_sed:
-        #        preset_sed.set(tso['sed_model'])
-        #    else:
-        #        choices = sed_dict[sed_type]
-        #        selected = tso['sed_model']
-        #        ui.update_select("sed", choices=choices, selected=selected)
-
-        ## The observation
-        #warning_text.set(tso['warnings'])
-        #obs_geometry = tso['obs_geometry']
-        #ui.update_select('obs_geometry', selected=obs_geometry)
-        #if float(t_dur) != float(current_tdur):
-        #    preset_obs_dur.set(tso['obs_dur'])
-        #else:
-        #    ui.update_numeric('obs_dur', value=float(tso['obs_dur']))
-
-        #choices = depth_choices[obs_geometry]
-        #ui.update_select(
-        #    "planet_model_type", choices=choices, selected=planet_model_type,
-        #)
-        #if planet_model_type == 'Input':
-        #    choices = list(spectra[obs_geometry])
-        #    selected = tso['depth_label']
-        #    ui.update_select("depth", choices=choices, selected=selected)
-        #elif planet_model_type == 'Flat':
-        #    ui.update_numeric("transit_depth", value=tso['rprs_sq'])
-        #elif planet_model_type == 'Blackbody':
-        #    ui.update_numeric("eclipse_depth", value=tso['rprs_sq'])
-        #    ui.update_numeric("teq_planet", value=tso['teq_planet'])
-
-        ## TSO plot popover menu
-        #if tso['is_tso']:
-        #    min_wl, max_wl = jwst._get_tso_wl_range(tso)
-        #    ui.update_numeric('tso_wl_min', value=min_wl)
-        #    ui.update_numeric('tso_wl_max', value=max_wl)
-
-        #    resolution = int(_safe_num(input.tso_resolution.get(), default=250, cast=int))
-        #    n_obs = int(_safe_num(input.n_obs.get(), default=1, cast=int))
-        #    units = 'percent'  if obs_geometry=='transit' else 'ppm'
-        #    ui.update_select('tso_depth_units', selected=units)
-        #    min_depth, max_depth, step = jwst._get_tso_depth_range(
-        #        tso, resolution, units,
-        #    )
-        #    ui.update_numeric('tso_depth_min', value=min_depth, step=step)
-        #    ui.update_numeric('tso_depth_max', value=max_depth, step=step)
-
-
     # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
     # Instrument
     @reactive.effect
@@ -1481,8 +1589,9 @@ def server(input, output, session):
         name = input.target.get()
 
         # Get the variances first
-        efficiency = input.efficiency.get() * pc.percent
         bands = list(input.bands.get())
+        efficiency = input.efficiency.get() * pc.percent
+        aperture = input.aperture.get()
         n_obs = input.n_obs.get()
 
         obs_geometry = input.obs_geometry.get()
@@ -1528,11 +1637,14 @@ def server(input, output, session):
         tso = {}
         for band in bands:
             det = detectors[band]
-            tso[band] = det.make_tso(wl, flux)
+            tso[band] = det.make_tso(wl, flux, aperture)
 
         tso_label = make_tso_label(input, spectra)
 
+        # Note: this should mirror the waltzer_sample() dictionary
         tso['meta'] = {
+            'version': waltzer_version,
+            'mirror_diameter': float(det.diameter),
             'bands': bands,
             'efficiency': efficiency,
             'n_obs': n_obs,
@@ -1604,22 +1716,13 @@ def server(input, output, session):
 
         elif tab == 'Noise':
             plot_type = input.noise_plot.get()
-            if plot_type == 'variance':
-                header = (
-                    'wl(um)  wl_half_width(um) source(e/s)  sky(e/s)  '
-                    'dark(e/s)  read_noise(e/s)'
-                )
-            elif plot_type == 'snr':
-                header = (
-                    'wl(um)  flux_in(e)  flux_out(e)  '
-                    'var_in(e)  var_out(e)  wl_half_width(um) depth'
-                )
-
             data = data_clipboard.get()
+
             sed_type, sed_model, mag, sed_label = parse_sed(input, spectra)
             filename = f'{sed_model}_waltzer_variances.dat'
             savefile = Path(f'{current_dir}/{filename}')
-            np.savetxt(savefile, data, header=header)
+            with open(savefile, 'w') as f:
+                f.write(data)
             message = f"Variances saved to file: '{savefile}'"
 
         else:
@@ -1633,12 +1736,9 @@ def server(input, output, session):
             filename = f'{key.lower()}_{target}_waltzer_tso.dat'
             savefile = Path(f'{current_dir}/{filename}')
 
-            labs, data = data_clipboard.get()
-            np.savetxt(
-                savefile,
-                data,
-                header=labs,
-            )
+            data = data_clipboard.get()
+            with open(savefile, 'w') as f:
+                f.write(data)
             message = f"TSO model saved to file: '{savefile}'"
 
         ui.notification_show(message, type="message", duration=5)
@@ -1992,16 +2092,10 @@ def server(input, output, session):
             ui.update_selectize('target', selected=target.planet)
 
         # Physical properties:
-        if target.planet in cache_target:
-            t_eff  = cache_target[target.planet]['t_eff']
-            log_g = cache_target[target.planet]['log_g']
-            t_dur = cache_target[target.planet]['t_dur']
-            magnitude = cache_target[target.planet]['norm_mag']
-        else:
-            t_eff = as_str(target.teff, '.0f', '')
-            log_g = as_str(target.logg_star, '.2f', '')
-            t_dur = as_str(target.transit_dur, '.3f', '')
-            magnitude = f'{target.v_mag:.3f}'
+        t_eff = as_str(target.teff, '.0f', '')
+        log_g = as_str(target.logg_star, '.2f', '')
+        t_dur = as_str(target.transit_dur, '.3f', '')
+        magnitude = f'{target.v_mag:.3f}'
 
         ui.update_numeric('t_eff', value=float(t_eff))
         ui.update_numeric('log_g', value=float(log_g))
@@ -2025,19 +2119,13 @@ def server(input, output, session):
         esasky_command.set([delete_catalog, delete_footprint, goto])
 
         # Observing properties:
-        if name in cache_target and cache_target[name]['rprs_sq'] is not None:
-            rprs_square_percent = cache_target[name]['rprs_sq']
-            teq_planet = cache_target[name]['teq_planet']
-            cache_target[name]['rprs_sq'] = None
-            cache_target[name]['teq_planet'] = None
-        else:
-            teq_planet = np.round(target.eq_temp, decimals=0)
-            if np.isnan(teq_planet):
-                teq_planet = 0
-            rprs_square = target.rprs**2.0
-            if np.isnan(rprs_square):
-                rprs_square = 0.0
-            rprs_square_percent = np.round(100*rprs_square, decimals=4)
+        teq_planet = np.round(target.eq_temp, decimals=0)
+        if np.isnan(teq_planet):
+            teq_planet = 0
+        rprs_square = target.rprs**2.0
+        if np.isnan(rprs_square):
+            rprs_square = 0.0
+        rprs_square_percent = np.round(100*rprs_square, decimals=4)
 
         if rprs_square_percent is not None:
             ui.update_numeric("transit_depth", value=rprs_square_percent)
@@ -2213,15 +2301,8 @@ def server(input, output, session):
 
         models = list(spectra[obs_geometry])
         name = input.target.get()
-        cached = (
-            name in cache_target and
-            cache_target[name]['depth_label'] is not None
-        )
         selected = input.depth.get()
-        if cached:
-            selected = cache_target[name]['depth_label']
-            cache_target[name]['depth_label'] = None
-        elif selected not in models:
+        if selected not in models:
             selected = None if len(models) == 0 else models[0]
         ui.update_select("depth", choices=models, selected=selected)
 
@@ -2232,6 +2313,24 @@ def server(input, output, session):
         elif obs_geometry == 'eclipse':
             tooltip_text = f'Upload an {obs_geometry} depth spectrum'
         ui.update_tooltip('depth_tooltip', tooltip_text)
+
+
+    @reactive.effect
+    #@reactive.event(input.obs_geometry, update_depth_flag)
+    @reactive.event(update_extended_flag)
+    def update_extended_spectra():
+        models = list(spectra['extended'])
+        selected = input.extended_source.get()
+
+        if selected not in models:
+            selected = None if len(models) == 0 else models[0]
+        ui.update_select("extended_source", choices=models, selected=selected)
+
+        if len(models) > 0:
+            tooltip_text = ''
+        else:
+            tooltip_text = f'Upload a source spectrum'
+        ui.update_tooltip('extended_tooltip', tooltip_text)
 
 
     @render.text
@@ -2356,6 +2455,44 @@ def server(input, output, session):
 
 
     @reactive.effect
+    @reactive.event(input.upload_extended)
+    def _():
+        ui.update_radio_buttons(id='upload_wl_units', selected='micron')
+        uploaded_units.set('mJy_arcsec2')
+        m = ui.modal(
+            ui.markdown(
+                "Input files must be plan-text files with two columns, "
+                "the first one being the wavelength and "
+                "the second one the SED of the extended source.<br>**Make sure "
+                "the input units are correct before uploading a file!**"
+            ),
+            ui.input_radio_buttons(
+                id="upload_wl_units",
+                label='Wavelength units:',
+                choices=['micron'],
+                selected='micron',
+                width='100%',
+            ),
+            ui.input_radio_buttons(
+                id="upload_units",
+                label='Radiance units:',
+                choices=extended_units,
+                width='100%',
+            ),
+            ui.input_file(
+                id="upload_file",
+                label='',
+                button_label="Browse",
+                multiple=True,
+                width='100%',
+            ),
+            title="Upload extended-source spectrum",
+            easy_close=True,
+        )
+        ui.modal_show(m)
+
+
+    @reactive.effect
     @reactive.event(input.upload_units)
     def _():
         uploaded_units.set(input.upload_units.get())
@@ -2368,10 +2505,10 @@ def server(input, output, session):
         if not new_model:
             return
 
-        # The units tell this function SED or depth spectrum:
         filename = new_model[0]['name']
         filepath = new_model[0]['datapath']
 
+        # The units tell stellar SED, extended source, or depth spectrum:
         wl_units = input.upload_wl_units.get()
         units = uploaded_units.get()
 
@@ -2408,22 +2545,30 @@ def server(input, output, session):
                 'filename': f'input_{filename}',
             }
             update_sed_flag.set(label)
+        elif units in extended_units:
+            spectra['extended'][label] = {
+                'wl': wl,
+                'radiance': model,
+                'units': units,
+                'filename': filename,
+            }
+            update_extended_flag.set(label)
 
 
     @reactive.effect
-    @reactive.event(input.tso_resolution, input.share_resolution)
+    @reactive.event(input.tso_resolution, input.share_resolution, input.readout)
     def update_actual_resolution():
         resolution = input.tso_resolution.get()
+        readout = input.readout.get()
         if input.share_resolution.get():
             ui.update_numeric(id='tso_resolution_nuv', value=resolution)
 
-        if resolution == 0.0:
-            binsize = 1
-            actual_resolution.set(6000.0)
-        else:
-            idx = searchsorted_closest(resolutions, resolution)
-            binsize = bins[idx]
-            actual_resolution.set(resolutions[idx])
+        if resolution <= 0.0 or resolution is None:
+            resolution = 6000.0
+        idx = searchsorted_closest(resolutions, resolution, readout)
+        #print(readout, idx, bins[idx], resolution, resolutions[idx])
+        binsize = bins[idx]
+        actual_resolution.set(resolutions[idx])
 
         if binsize != wl_binsize.get():
             wl_binsize.set(binsize)
@@ -2436,18 +2581,17 @@ def server(input, output, session):
         input.tso_resolution, input.tso_resolution_nuv, input.share_resolution,
     )
     def update_actual_resolution_nuv():
+        readout = input.readout.get()
         if input.share_resolution.get():
             resolution = input.tso_resolution.get()
         else:
             resolution = input.tso_resolution_nuv.get()
 
-        if resolution == 0.0:
-            binsize = 1
-            actual_resolution_nuv.set(6000.0)
-        else:
-            idx = searchsorted_closest(resolutions, resolution)
-            binsize = bins[idx]
-            actual_resolution_nuv.set(resolutions[idx])
+        if resolution == 0.0 or resolution is None:
+            resolution = 6000.0
+        idx = searchsorted_closest(resolutions, resolution, readout)
+        binsize = bins[idx]
+        actual_resolution_nuv.set(resolutions[idx])
 
         if binsize != wl_binsize_nuv.get():
             wl_binsize_nuv.set(binsize)
@@ -2542,34 +2686,43 @@ def server(input, output, session):
 
         key, tso_label = tso_key.split('_', maxsplit=1)
         tso = tso_runs[key][tso_label]
+        bands = tso['meta']['bands']
 
         plot_type = input.noise_plot.get()
         readout = input.readout.get()
+        aperture = input.aperture.get()
+        system_vars = systematic_noise.get()
         binsize = wl_binsize.get()
         wl_scale = input.noise_wl_scale.get()
 
+        rebin = 1
+        if readout == 'faint':
+            rebin = 2
+        elif readout == 'ultra_faint':
+            rebin = 4
+
         if plot_type == 'variance':
-            bands = tso['meta']['bands']
             var_data = [
-                waltz.calc_variances(tso[band], readout=readout)
+                waltz.calc_variances(
+                    tso[band], readout, aperture,
+                    systematic_noise=system_vars[band],
+                )
                 for band in bands
             ]
 
-            clip = np.hstack([
-                np.array(v_data)
-                for v_data in var_data
-            ]).T
-            data_clipboard.set(clip)
+            formatted_data = data_to_text(var_data, 'source_variances')
+            data_clipboard.set(formatted_data)
 
             fig = plt.plotly_variances(
                 var_data,
                 bands,
                 wl_scale=wl_scale,
-                binsize=binsize,
+                binsize=binsize//rebin,
             )
             return fig
 
         elif plot_type == 'snr':
+            system_noise = [system_vars[band] for band in bands]
             efficiency = input.efficiency.get() * pc.percent
             n_obs = input.n_obs.get()
             transit_dur = input.t_dur.get()
@@ -2585,15 +2738,14 @@ def server(input, output, session):
                 tso, depth_model, obs_geometry,
                 n_obs, transit_dur, obs_dur, binsize,
                 readout=readout,
+                aperture=aperture,
                 efficiency=efficiency,
                 ret_variances=True,
+                systematic_noise=system_noise,
             )
 
-            clip = np.vstack([
-                np.hstack([d for d in f_data])
-                for f_data in flux_data[1:]
-            ]).T
-            data_clipboard.set(clip)
+            formatted_data = data_to_text(flux_data[1:], 'source_snr')
+            data_clipboard.set(formatted_data)
 
             fig = plt.plotly_flux_snr(
                 flux_data,
@@ -2629,6 +2781,11 @@ def server(input, output, session):
         efficiency = input.efficiency.get() * pc.percent
         n_obs = input.n_obs.get()
         readout = input.readout.get()
+        aperture = input.aperture.get()
+        system_var = systematic_noise.get()
+        system_noise = [system_var[band] for band in bands]
+
+        noiseless = is_noiseless.get()
 
         obs_geometry = input.obs_geometry.get()
         transit_dur = input.t_dur.get()
@@ -2647,21 +2804,19 @@ def server(input, output, session):
         label, wavel, depth = read_depth_spectrum(input, spectra, wl, f_star)
         depth_model = wavel, depth
 
-        noiseless = plot_type == 'snr'
+        noiseless |= plot_type == 'snr'
         tso_data = waltz.simulate_spectrum(
             tso, depth_model, obs_geometry,
             n_obs, transit_dur, obs_dur,
             band_binsize,
             readout=readout,
+            aperture=aperture,
             efficiency=efficiency, noiseless=noiseless,
+            systematic_noise=system_noise,
         )
 
-        head = 'wl(um)  depth  depth_error  wl_half_width(um)'
-        clip = np.vstack([
-            np.hstack([d for d in t_data])
-            for t_data in tso_data[1:]
-        ]).T
-        data_clipboard.set([head, clip])
+        formatted_data = data_to_text(tso_data[1:], 'tso')
+        data_clipboard.set(formatted_data)
 
         wl_scale = input.tso_wl_scale.get()
         wl_min = input.tso_wl_min.get()
@@ -2707,56 +2862,15 @@ def server(input, output, session):
     # Results
     @render.ui
     def results():
-        # Only read for reactivity reasons:
-        saturation_label.get()
-
-        #config = parse_instrument(input)
-        #config = None
-        #if config is None:
-        #    return ui.HTML('<pre> </pre>')
-
         name = input.target.get()
-        #target = catalog.get_target(name, is_transit=None, is_confirmed=None)
-        #cached_target = (
-        #    target is not None and
-        #    target.host in cache_acquisition and
-        #    cache_acquisition[target.host]['selected'] is not None
-        #)
+        data = data_clipboard.get()
 
-        #depth_label = parse_obs(input)[1]
-        #transit_dur = _safe_num(input.t_dur.get(), default=2.0, cast=float)
+        text = name + '<br>'
+        if data is None:
+            return ui.HTML(f'<pre>{text}</pre>')
 
-        #if parse_sed(input, spectra)[-1] is None:
-        #    return ui.HTML('<pre> </pre>')
-
-        #obs_geometry = input.obs_geometry.get()
-        #run_type = obs_geometry.capitalize()
-
-        #report_text = jwst._print_pandeia_exposure()
-        #target_name = f': {target.planet}' if target is not None else ''
-        #report_text = f'<b>target{target_name}</b><br>{report_text}'
-
-        #sed_type, sed_model, norm_mag, sed_label = parse_sed(
-        #    input, spectra,
-        #)
-        #pixel_rate, full_well = get_saturation_values(
-        #    filter, sed_label, norm_mag, cache_saturation,
-        #)
-        #if pixel_rate is not None:
-        #    saturation_text = jwst._print_pandeia_saturation(
-        #        pixel_rate, full_well,
-        #        format='html',
-        #    )
-        #    report_text += f'<br>{saturation_text}'
-
-        #tso_label = make_obs_label()
-        #if tso_label in tso_runs[run_type]:
-        #    tso_run = tso_runs[run_type][tso_label]
-        #    if transit_dur == tso_run['transit_dur']:
-        #        report_text += f'<br><br>{tso_run["stats"]}'
-        report_text = name
-        return ui.HTML(f'<pre>{report_text}</pre>')
-
+        text += data.replace('\n', '<br>')
+        return ui.HTML(f'<pre>{text}</pre>')
 
 
     @reactive.effect
