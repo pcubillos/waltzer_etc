@@ -115,6 +115,10 @@ detectors = {
     band: waltz.Detector(band, diameter=primary_diameter)
     for band in bands
 }
+systematic_vars = {
+    band: det.systematic_noise
+    for band,det in detectors.items()
+}
 
 band_wl, band_response, band_mask = get_throughput()
 
@@ -433,7 +437,7 @@ app_ui = ui.page_fluid(
                         label='',
                         choices={
                             'point': 'Point Source',
-                            'extended': 'Extended Source',
+                            #'extended': 'Extended Source',
                         },
                         selected='point',
                     ),
@@ -1434,7 +1438,7 @@ def server(input, output, session):
     programs_info = reactive.Value(None)
     clipboard = reactive.Value('')
     data_clipboard = reactive.Value(None)
-    systematic_noise = reactive.Value(None)
+    systematic_noise = reactive.Value(systematic_vars)
     is_noiseless = reactive.Value(False)
 
     # Invisible flags
@@ -1466,13 +1470,35 @@ def server(input, output, session):
                     min=30.0,
                     max=50.0,
                 ),
-                ui.input_numeric(
-                    id="systematic_noise",
-                    label="Systematic variance (e⁻ s⁻¹ pixel⁻¹)",
-                    value='None',
-                    step=5.0,
-                    min=0.0,
-                    max=300.0,
+                'Systematic variances [NUV, VIS, NIR] (e⁻ read⁻¹ pixel⁻¹)',
+                ui.layout_column_wrap(
+                    ui.input_numeric(
+                        id="nuv_sys_noise",
+                        label="",
+                        value=systematic_vars['nuv'],
+                        step=0.5,
+                        min=0.0,
+                    ),
+                    ui.input_numeric(
+                        id="vis_sys_noise",
+                        label="",
+                        value=systematic_vars['vis'],
+                        step=0.5,
+                        min=0.0,
+                    ),
+                    ui.input_numeric(
+                        id="nir_sys_noise",
+                        label="",
+                        value=systematic_vars['nir'],
+                        step=100.0,
+                        min=0.0,
+                    ),
+                    width=1/3,
+                    fixed_width=False,
+                    heights_equal='all',
+                    gap='7px',
+                    fill=False,
+                    fillable=True,
                 ),
                 ui.input_select(
                     id="noiseless",
@@ -1506,7 +1532,11 @@ def server(input, output, session):
             'display_tso_run',
             choices=make_tso_labels({}),
         )
-        systematic_noise.set(input.systematic_noise.get())
+        systematic_noise.set({
+            'nuv': input.nuv_sys_noise.get(),
+            'vis': input.vis_sys_noise.get(),
+            'nir': input.nir_sys_noise.get(),
+        })
         is_noiseless.set(input.noiseless.get()=='True')
         ui.modal_remove()
 
@@ -2656,11 +2686,12 @@ def server(input, output, session):
 
         key, tso_label = tso_key.split('_', maxsplit=1)
         tso = tso_runs[key][tso_label]
+        bands = tso['meta']['bands']
 
         plot_type = input.noise_plot.get()
         readout = input.readout.get()
         aperture = input.aperture.get()
-        system_var = systematic_noise.get()
+        system_vars = systematic_noise.get()
         binsize = wl_binsize.get()
         wl_scale = input.noise_wl_scale.get()
 
@@ -2671,10 +2702,10 @@ def server(input, output, session):
             rebin = 4
 
         if plot_type == 'variance':
-            bands = tso['meta']['bands']
             var_data = [
                 waltz.calc_variances(
-                    tso[band], readout, aperture, systematic_noise=system_var,
+                    tso[band], readout, aperture,
+                    systematic_noise=system_vars[band],
                 )
                 for band in bands
             ]
@@ -2691,6 +2722,7 @@ def server(input, output, session):
             return fig
 
         elif plot_type == 'snr':
+            system_noise = [system_vars[band] for band in bands]
             efficiency = input.efficiency.get() * pc.percent
             n_obs = input.n_obs.get()
             transit_dur = input.t_dur.get()
@@ -2709,7 +2741,7 @@ def server(input, output, session):
                 aperture=aperture,
                 efficiency=efficiency,
                 ret_variances=True,
-                systematic_noise=system_var,
+                systematic_noise=system_noise,
             )
 
             formatted_data = data_to_text(flux_data[1:], 'source_snr')
@@ -2751,6 +2783,8 @@ def server(input, output, session):
         readout = input.readout.get()
         aperture = input.aperture.get()
         system_var = systematic_noise.get()
+        system_noise = [system_var[band] for band in bands]
+
         noiseless = is_noiseless.get()
 
         obs_geometry = input.obs_geometry.get()
@@ -2778,7 +2812,7 @@ def server(input, output, session):
             readout=readout,
             aperture=aperture,
             efficiency=efficiency, noiseless=noiseless,
-            systematic_noise=system_var,
+            systematic_noise=system_noise,
         )
 
         formatted_data = data_to_text(tso_data[1:], 'tso')
