@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## Version 0.4.0 (2026-03-26)
+
+- Added systematic noise to variances list
+- Added ETC version and mirror diameter to pickle 'meta'
+- Enabled readout-mode selection
+- Enabled slit-width selection
+- Corrected sky-background calculation depending on slit width
+- GUI: display data on screen when simulating noise or spectra
+- GUI: started drafting options for extended sources
+
 ## Version 0.3.8 (2026-03-06)
 
 - Updated dichroic1 transmission efficiency with data from manufactor. There is an increase from 90% to 95%.
