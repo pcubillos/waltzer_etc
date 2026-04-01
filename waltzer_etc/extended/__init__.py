@@ -1,17 +1,10 @@
 # Copyright (c) 2025-2026 Patricio Cubillos and A. G. Sreejith
 # WALTzER is open-source software under the GPL-2.0 license (see LICENSE)
 
-from .snr_waltzer import *
-from .sample_snr import *
-from . import snr_waltzer
-from . import sample_snr
-from . import extended
-from .version import __version__
+from .extended_sources import *
 
 __all__ = (
-    sample_snr.__all__ +
-    snr_waltzer.__all__ +
-    ['extended']
+    extended_sources.__all__
 )
 
 # Clean up top-level namespace--delete everything that isn't in __all__
