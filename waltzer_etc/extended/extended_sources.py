@@ -6,7 +6,7 @@ __all__ = [
     'display_2d_source',
     'arcsec_to_pixel',
     'dispersion_integral',
-    'image_2d_to_detector_2d',
+    'image_to_detector',
     'simulate_spectrum',
 ]
 
@@ -217,7 +217,7 @@ def dispersion_integral(source_2d, xd_arcsec, disp_arcsec, det):
         A WALTzER Detector object.
 
     Returns
-    ------- 
+    -------
     source_1d: 1D float array
         Integrated source flux (mJy) at each WALTzER cross-dispersion pixel.
     cross_disp: 1D float array
@@ -292,50 +292,118 @@ def dispersion_integral(source_2d, xd_arcsec, disp_arcsec, det):
         source_1d[i] = np.trapezoid(y_ext[mask], x_ext[mask])
         slit_area[i] = np.trapezoid(w_ext[mask], x_ext[mask])
 
-    xd_pixels = np.arange(len(source_1d))
     cross_disp = 0.5*(int_limits[1:] + int_limits[:-1])
 
     return source_1d, cross_disp, slit_area
 
 
-def image_2d_to_detector_2d(source_2d, x, y, source_spectrum, det):
-    """
+def image_to_detector(source_2d, xd_arcsec, disp_arcsec, source_spectrum, det):
+    r"""
     Convert 2D-spatial image to 2D-detector image (wavelength vs
-    cross-dispersion).
+    cross-dispersion) and compute variances from all noise components.
 
     Parameters
     ----------
-    det:
-    source_spectrum:
+    source_2d: 2D float array
+        2D source spatial image in cross-dispersion (arcsec) and
+        dispersion (arcsec) axis. Image outside the aperture will have
+        np.nan values.
+    xd_arcsec: 1D float array
+        Cross-dispersion array in arcsec. Origin is always defined at
+        the center of the wide-end of the slit.
+    disp_arcsec: 1D float array
+        Dispersion array in arcsec. Origin (x=0) is always defined at
+        the center of the slit.
+    source_spectrum: tuple of two 1D float arrays
+        Arrays containing the source spectrum:
+        - wavelength (micron)
+        - intensity (mJy arcsec⁻²)
+    det: Detector()
+        A WALTzER Detector object.
+
+    Returns
+    -------
+    variances: 3D float array
+        Array of shape (ndata, xd_pix, nwave) containing the variances
+        (e⁻ s⁻¹ pixel⁻¹) for the following sources:
+        - var_source: Source variance.
+        - var_background: Background sky variance.
+        - var_dark: Dark-current variance.
+        - var_read: Read-noise variance.
+        - var_systematics: Variance from all other systematic noises.
+    cross_disp: 1D float array
+        Cross-dispersion array in arcsec for source_1d.
+    slit_area: 1D float array
+        Collecting area (arcsec²) for each source_1d bin.
+    wl: 1D float array
+        Wavelenght array (microns) of length nwave.
+    half_widths: 1D float array
+        Wavelength half widths for each spectral point (of shape nwave).
+    throughput: 1D float array
+        Detector throughput along wavelength axis (of shape nwave).
 
     Examples
     --------
-    >>> from waltzer_etc import Detector
-    >>> import waltzer_etc.extended_sources as wex
-
-    >>> # Read spectrum: wl(um) and intensity (mJy arcsec⁻²)
+    >>> import waltzer_etc as waltz
+    >>> import waltzer_etc.extended as wex
+    >>>
+    >>> # Read a spectrum: wl(um) and intensity (mJy arcsec⁻²)
     >>> s_file = 'psg_rad_comet_upload.txt'
     >>> source_spectrum = np.loadtxt(s_file, unpack=True)
-    >>> # Hack
-    >>> source_spectrum[1] = 3*source_spectrum[1]
-
+    >>>
+    >>> # Generate spatial profile
     >>> radius = 5.0
     >>> pow_law_index = 0.6
-    >>> det = Detector('vis')
+    >>> det = waltz.Detector('vis')
     >>> slit_pos = 'medium'
-    >>> offset = (0, 0)
-    >>> source_2d, x, y, x0, y0 = wex.power_law_source(
-    >>>     radius, pow_law_index, det.band, slit_pos, offset,
+    >>> source_2d, xd_arcsec, d_arcsec, xd_loc, disp_loc = wex.power_law_source(
+    >>>     radius, pow_law_index, det.band, slit_pos,
     >>> )
-
-    >>> ax = wex.display_2d_source(source_2d, x0, y0, radius)
-    >>> # plt.savefig('slit_power_law_source.png', dpi=300)
-
-    >>> obs = wex.image_2d_to_detector_2d(
-    >>>     source_2d, x, y, source_spectrum, det,
+    >>> ax = wex.display_2d_source(source_2d, xd_loc, disp_loc, radius)
+    >>>
+    >>> # Image and variances as obtained in the WALTzER detector
+    >>> obs = wex.image_to_detector(
+    >>>     source_2d, xd_arcsec, d_arcsec, source_spectrum, det,
     >>> )
-
-    >>> source_loc = wex.arcsec_to_pixel(x0, det)
+    >>> # Unpack outputs
+    >>> variances, cross_disp, slit_area, wl, half_widths, throughput = obs
+    >>> source, background, dark, read_noise, sys_noise = variances
+    >>>
+    >>> # Plot source (only correct by throughput)
+    >>> fs = 12
+    >>> fig = plt.figure(11)
+    >>> plt.clf()
+    >>> fig.set_size_inches(7, 6)
+    >>> plt.subplots_adjust(0.09, 0.09, 0.99, 0.95)
+    >>> ax = plt.subplot(111)
+    >>> cm = plt.pcolormesh(wl, cross_disp, source/throughput)
+    >>> ax.set_title(f'Source: WALTzER {det.band.upper()} channel')
+    >>> ax.set_xlabel(r'Wavelength ($\mathrm{\mu}$m)', fontsize=fs)
+    >>> ax.set_ylabel('Cross-dispersion (arcsec)', fontsize=fs)
+    >>> ax.tick_params(direction='in', which='both', labelsize=fs-1, color='w')
+    >>> bx = plt.colorbar(cm, pad=0.03)
+    >>> bx.ax.tick_params(direction='in', which='both', labelsize=fs-1, color='w')
+    >>> bx.set_label(r'Flux (e$^{-}$ s$^{-1}$)', fontsize=fs)
+    >>>
+    >>> # Now plot source and sky (correcting throughput and slit width)
+    >>> width0 = slit_area[np.searchsorted(cross_disp, xd_loc)]
+    >>> width_scale = np.expand_dims(width0 / slit_area, axis=1)
+    >>> image = (source+background)/throughput * width_scale
+    >>>
+    >>> fs = 12
+    >>> fig = plt.figure(12)
+    >>> plt.clf()
+    >>> fig.set_size_inches(7, 6)
+    >>> plt.subplots_adjust(0.09, 0.09, 0.99, 0.95)
+    >>> ax = plt.subplot(111)
+    >>> cm = plt.pcolormesh(wl, cross_disp, image)
+    >>> ax.set_title(f'Source + background: WALTzER {det.band.upper()} channel')
+    >>> ax.set_xlabel(r'Wavelength ($\mathrm{\mu}$m)', fontsize=fs)
+    >>> ax.set_ylabel('Cross-dispersion (arcsec)', fontsize=fs)
+    >>> ax.tick_params(direction='in', which='both', labelsize=fs-1, color='w')
+    >>> bx = plt.colorbar(cm, pad=0.03)
+    >>> bx.ax.tick_params(direction='in', which='both', labelsize=fs-1, color='w')
+    >>> bx.set_label(r'Flux (e$^{-}$ s$^{-1}$)', fontsize=fs)
     """
     # WALTzER high-resolution wavelength grid (angstrom, to be binned later)
     wl_min = det.hires_wl_min
@@ -380,8 +448,8 @@ def image_2d_to_detector_2d(source_2d, x, y, source_spectrum, det):
     wl = 0.5 * (wl_edges[1:] + wl_edges[:-1])
     half_widths = 0.5 * (wl_edges[1:] - wl_edges[:-1])
 
-    source_integral, xd_pixels, slit_area = dispersion_integral(
-        source_2d, x, y, det,
+    source_1d, cross_disp, slit_area = dispersion_integral(
+        source_2d, xd_arcsec, disp_arcsec, det,
     )
 
     # Convolve along cross-dispersion axis
@@ -389,7 +457,7 @@ def image_2d_to_detector_2d(source_2d, x, y, source_spectrum, det):
     fwhm = np.mean(det.cross_dispersion) / 5.0
     spatial_res = 1.0/fwhm
     convolved_source = inst_convolution(
-        xd_pixels, source_integral, spatial_res, sampling_res=1.0,
+        cross_disp, source_1d, spatial_res, sampling_res=1.0,
     )
 
     # Now construct spectra-vs-cross-dispersion 2D image(s)
@@ -408,7 +476,7 @@ def image_2d_to_detector_2d(source_2d, x, y, source_spectrum, det):
         np.tile(det.systematic_noise * nreads, image_size),
     ])
 
-    return variances, xd_pixels, slit_area, wl, half_widths, throughput
+    return variances, cross_disp, slit_area, wl, half_widths, throughput
 
 
 def simulate_spectrum(
